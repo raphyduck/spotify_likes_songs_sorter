@@ -1,6 +1,7 @@
 # Spotify Liked Songs Sorter
 
-A small utility for Spotify users who maintain a large collection of liked songs and want to keep them organized. The sorter analyzes each track's audio features and genre information to build playlists that better reflect your listening moods.
+A small utility for Spotify users who maintain a large collection of liked songs and want to keep them organized.
+The sorter analyzes each track's audio features and genre information to build playlists that better reflect your listening moods.
 
 ## Features
 
