@@ -1,14 +1,13 @@
 # Spotify Liked Songs Sorter
 
-A small utility for Spotify users who maintain a large collection of liked songs and want to keep them organized.
-The sorter analyzes each track's audio features and genre information to build playlists that better reflect your listening moods.
+A small utility for Spotify users who maintain a large collection of liked songs and want to keep them organized. The sorter enriches each liked track with album- and artist-level genre metadata so that it can group and order your collection by actual listening styles.
 
 ## Features
 
 - Fetches your liked songs directly from Spotify using the Web API.
-- Groups tracks by configurable genres or by similarity in audio features.
-- Writes playlists back to your Spotify account, allowing for quick access on any device.
-- Provides helper scripts for experimenting with genre detection and configuration.
+- Aggregates genre information for every album from Discogs, Last.fm, MusicBrainz, Spotify, Wikipedia, and more.
+- Clusters albums by genre similarity and produces a smoothly ordered playlist plus a CSV export of the final ordering.
+- Provides helper scripts for inspecting the resolved genres and fine-tuning your configuration.
 
 ## Prerequisites
 
@@ -52,11 +51,17 @@ The sorter analyzes each track's audio features and genre information to build p
 
 ### Debugging Genres
 
-If you want to inspect genre data for specific artists or tracks, use the helper script:
+If you want to inspect genre data for specific artists or tracks, use the helper script. The script requires details about the artist, album, track, and Spotify album ID so that it can query the same metadata sources as the main sorter:
+
 ```bash
-python debug_genres.py
+python debug_genres.py \
+  --artist "Radiohead" \
+  --album "In Rainbows" \
+  --song "Weird Fishes/Arpeggi" \
+  --album-id "5vkqYmiPBYLaalcmjujWxK"
 ```
-This script will output available genre information and help you refine the genre configuration used by the main sorter.
+
+Replace the sample values with the artist/album/track you want to inspect (the album ID is available from the Spotify desktop or web client). The script will output available genre information and help you refine the genre configuration used by the main sorter.
 
 ## Development
 
