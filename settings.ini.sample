@@ -1,0 +1,14 @@
+[SPOTIFY]
+CLIENT_ID = clientid
+CLIENT_SECRET = clientsecret
+REDIRECT_URI = http://127.0.0.1:8080
+
+[LASTFM]
+API_KEY = api_key
+
+[DISCOGS]
+API_KEY = api_key
+
+[GOOGLE_CSE]
+API_KEY = apikey
+CSE_ID  = cseid
