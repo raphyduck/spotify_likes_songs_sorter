@@ -1,6 +1,7 @@
 __version__ = "1.4.1"
 
 import os
+import sys
 import time
 import configparser
 from datetime import datetime
@@ -65,7 +66,7 @@ def get_spotify_client_console(scope: str,
     oauth = SpotifyOAuth(
         client_id=client_id,
         client_secret=client_secret,
-        redirect_uri="http://localhost/",   # IMPORTANT: ajouter exactement cette URI dans le dashboard
+        redirect_uri=REDIRECT_URI,
         scope=scope,
         open_browser=False,                  # n’essaie pas d’ouvrir un navigateur
         cache_path=cache_path,
