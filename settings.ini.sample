@@ -1,7 +1,7 @@
 [SPOTIFY]
 CLIENT_ID = clientid
 CLIENT_SECRET = clientsecret
-REDIRECT_URI = http://localhost/
+REDIRECT_URI = http://127.0.0.1:8080/
 
 [LASTFM]
 API_KEY = api_key

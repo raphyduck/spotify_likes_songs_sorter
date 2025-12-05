@@ -36,7 +36,7 @@ config.read("settings.ini")
 CLIENT_ID       = config["SPOTIFY"]["CLIENT_ID"]
 CLIENT_SECRET   = config["SPOTIFY"]["CLIENT_SECRET"]
 REDIRECT_URI    = config["SPOTIFY"]["REDIRECT_URI"]
-EXPECTED_REDIRECT_URI = "http://localhost/"
+EXPECTED_REDIRECT_URI = "http://127.0.0.1:8080/"
 if REDIRECT_URI.rstrip("/") + "/" != EXPECTED_REDIRECT_URI:
     print(
         "ERROR: The console authorization flow requires the redirect URI to be set to"
@@ -69,7 +69,7 @@ def get_spotify_client_console(scope: str,
                                cache_path: str = ".cache") -> spotipy.Spotify:
     """
     Auth console-only (pas de serveur local, pas de port). 
-    Nécessite que 'http://localhost/' soit ajouté dans les Redirect URIs du dashboard Spotify.
+    Nécessite que 'http://127.0.0.1:8080/' soit ajouté dans les Redirect URIs du dashboard Spotify.
     """
     oauth = SpotifyOAuth(
         client_id=client_id,
@@ -99,7 +99,7 @@ def get_spotify_client_console(scope: str,
     print("\n=== Spotify OAuth (mode console) ===")
     print("1) Ouvre cette URL dans un navigateur (copie/colle) :\n")
     print(auth_url)
-    print("\n2) Connecte-toi, autorise l’app, puis COPIE/COLLE ICI l’URL complète de redirection (celle qui commence par http://localhost/ ...):\n")
+    print("\n2) Connecte-toi, autorise l’app, puis COPIE/COLLE ICI l’URL complète de redirection (celle qui commence par http://127.0.0.1:8080/ ...):\n")
     try:
         redirected_url = input("> URL de redirection: ").strip()
     except EOFError:
