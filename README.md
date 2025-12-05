@@ -38,7 +38,7 @@ A small utility for Spotify users who maintain a large collection of liked songs
    ```bash
    cp settings.ini.sample settings.ini
    ```
-2. Edit `settings.ini` and provide your Spotify Client ID, Client Secret, and redirect URI. You can also customize genre groupings and playlist naming conventions in this file.
+2. Edit `settings.ini` and provide your Spotify Client ID, Client Secret, and redirect URI. Register **exactly** `http://127.0.0.1:8080/` as a Redirect URI in your Spotify Developer Dashboard and mirror the same value in `settings.ini` to match the console authorization flow.
 
 ## Usage
 
