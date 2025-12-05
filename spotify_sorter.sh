@@ -7,5 +7,5 @@ if [ ! -f .venv/bin/activate ]; then
   exit 1
 fi
 
-source .venv/bin/activate
+source ~/.venv/bin/activate
 python ./spotify_sorter.py
