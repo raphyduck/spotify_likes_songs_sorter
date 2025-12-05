@@ -36,6 +36,14 @@ config.read("settings.ini")
 CLIENT_ID       = config["SPOTIFY"]["CLIENT_ID"]
 CLIENT_SECRET   = config["SPOTIFY"]["CLIENT_SECRET"]
 REDIRECT_URI    = config["SPOTIFY"]["REDIRECT_URI"]
+EXPECTED_REDIRECT_URI = "http://localhost/"
+if REDIRECT_URI.rstrip("/") + "/" != EXPECTED_REDIRECT_URI:
+    print(
+        "ERROR: The console authorization flow requires the redirect URI to be set to"
+        f" {EXPECTED_REDIRECT_URI}. Please update settings.ini and your Spotify"
+        " Developer Dashboard to match."
+    )
+    sys.exit(1)
 SCOPES           = [
 "user-library-read",
 "user-read-private",
@@ -79,6 +87,15 @@ def get_spotify_client_console(scope: str,
 
     # 2) Sinon, on lance un flow manuel
     auth_url = oauth.get_authorize_url()
+    redirect_in_url = parse_qs(urlparse(auth_url).query).get("redirect_uri", [""])[0]
+    if redirect_in_url.rstrip("/") + "/" != EXPECTED_REDIRECT_URI:
+        print(
+            "ERROR: Generated authorize URL does not match the expected redirect"
+            f" URI ({EXPECTED_REDIRECT_URI}), which can lead to INVALID_CLIENT."
+            " Confirm your settings.ini and Spotify app redirect URI both use this"
+            " exact value."
+        )
+        sys.exit(1)
     print("\n=== Spotify OAuth (mode console) ===")
     print("1) Ouvre cette URL dans un navigateur (copie/colle) :\n")
     print(auth_url)
