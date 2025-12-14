@@ -181,6 +181,22 @@ def get_spotify_artist_genres(sp, artist_name):
         pass
     return []
 
+
+def get_spotify_track_artist_genres(sp, track_id):
+    """
+    Fetch genres from the artists attached to a specific track.
+    """
+    try:
+        track = sp.track(track_id)
+        genres = []
+        for artist in track.get("artists", []):
+            art = sp.artist(artist.get("id"))
+            genres.extend(art.get("genres", []))
+        return clean_tags(genres)
+    except Exception:
+        pass
+    return []
+
 def lookup_genres(artist, album, song, album_id, cfg):
     """
     Run each service in turn and return an OrderedDict of their results.
