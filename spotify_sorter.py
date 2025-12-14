@@ -355,7 +355,9 @@ playlist_id = playlist["id"]
 print(f"\n🎯 Created playlist: {playlist_name} (ID: {playlist_id})")
 
 track_uris = ["spotify:track:" + tid for tid in final_df["Spotify Track ID"]]
-for chunk in (track_uris[pos:pos+100] for pos in range(0, len(track_uris), 100)):
+total_chunks = (len(track_uris) + 99) // 100
+for i, chunk in enumerate((track_uris[pos:pos+100] for pos in range(0, len(track_uris), 100)), 1):
+    print(f"Adding chunk {i}/{total_chunks}")
     sp.playlist_add_items(playlist_id, chunk)
     time.sleep(0.5)
 
