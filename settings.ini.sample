@@ -16,3 +16,5 @@ CSE_ID  = cseid
 [CLUSTERING]
 segmentation_strength = 0.6
 max_clusters = 10
+
+; iTunes Search fallback requires no API key and needs no configuration.
