@@ -85,9 +85,9 @@ def get_spotify_client_console(scope: str,
     )
 
     # 1) Tente d’utiliser le token en cache si existant
-    token_info = oauth.get_cached_token()
-    if token_info and token_info.get("access_token"):
-        return spotipy.Spotify(auth=token_info["access_token"])
+    token_info = oauth.validate_token(oauth.cache_handler.get_cached_token())
+    if token_info:
+        return spotipy.Spotify(auth_manager=oauth)
 
     # 2) Sinon, on lance un flow manuel
     auth_url = oauth.get_authorize_url()
@@ -124,7 +124,7 @@ def get_spotify_client_console(scope: str,
         print("Impossible d’obtenir un access_token.", file=sys.stderr)
         sys.exit(1)
 
-    return spotipy.Spotify(auth=token_info["access_token"])
+    return spotipy.Spotify(auth_manager=oauth)
 
 sp = get_spotify_client_console(
     scope=SCOPE,
