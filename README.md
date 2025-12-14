@@ -40,6 +40,22 @@ A small utility for Spotify users who maintain a large collection of liked songs
    ```
 2. Edit `settings.ini` and provide your Spotify Client ID, Client Secret, and redirect URI. Register **exactly** `http://127.0.0.1:8080/` as a Redirect URI in your Spotify Developer Dashboard and mirror the same value in `settings.ini` to match the console authorization flow.
 
+### Clustering and ordering
+
+The sorter now picks segmentation settings from the data: it tries several minimum-spanning-tree cuts and keeps the one with the best silhouette score, falling back to trimming the heaviest genre-distance edges. The greedy chaining step also adapts to the observed similarity distribution so resets happen only when similarities drop meaningfully.
+
+You can tune how tight the grouping is without touching the code via `settings.ini`:
+
+```ini
+[CLUSTERING]
+# 0.0 = looser, 1.0 = tighter; default 0.6
+segmentation_strength = 0.6
+# Upper bound for how many clusters the silhouette search will try (default 10)
+max_clusters = 10
+```
+
+Lower `segmentation_strength` values keep broader groups (fewer cuts), while higher values favor more, smaller clusters and earlier resets in the chaining order. Increase `max_clusters` only if you have many distinct genre sets and want the silhouette search to consider finer splits.
+
 ## Usage
 
 1. Ensure your virtual environment is active and your configuration file is set up.
