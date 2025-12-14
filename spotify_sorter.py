@@ -226,11 +226,15 @@ songs_data = get_liked_songs()
 df = pd.DataFrame(songs_data)
 
 print("🔎 Fetching genres for songs (with shared helpers)...")
-df["Album Genre"] = df.apply(
-    lambda row: get_best_genre(
-        row["Song"], row["Artist"], row["Album"], row["Album ID"], row["Spotify Track ID"]
-    ), axis=1
-)
+progress_every = max(1, min(50, len(df) // 10 or 1))
+album_genres = []
+for idx, row in enumerate(df.itertuples(index=False), start=1):
+    album_genres.append(
+        get_best_genre(row.Song, row.Artist, row.Album, row.Album_ID, row.Spotify_Track_ID)
+    )
+    if idx % progress_every == 0 or idx == len(df):
+        print(f"  Processed {idx}/{len(df)} songs...")
+df["Album Genre"] = album_genres
 
 # Unique identifier
 df["Unique Album"] = df["Album"] + " - " + df["Artist"]
