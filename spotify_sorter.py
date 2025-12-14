@@ -8,7 +8,6 @@ from datetime import datetime
 
 import pandas as pd
 import numpy as np
-import requests
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 from sklearn.preprocessing import MultiLabelBinarizer
@@ -26,6 +25,7 @@ from genre_helpers import (
     get_wikipedia_album_info,
     get_spotify_album_info,
     get_spotify_artist_genres,
+    get_spotify_track_artist_genres,
     normalize_and_sort_genres)
 
 # -----------------------------
@@ -163,82 +163,6 @@ def get_liked_songs():
 #  Determine best genre using shared helpers
 # -----------------------------
 album_genre_cache = {}
-_audio_feature_cache = {}
-
-REFERENCE_TRACKS = [
-    ("3n3Ppam7vgaVa1iaRUc9Lp", ["Pop", "Hip Hop"]),        # Outkast – Hey Ya!
-    ("4pbJqGIASGPr0ZpGpnWkDn", ["Rock", "Alternative"]),   # The Killers – Mr. Brightside
-    ("0VjIjW4GlUZAMYd2vXMi3b", ["Pop", "Dance"]),           # The Weeknd – Blinding Lights
-    ("7ouMYWpwJ422jRcDASZB7P", ["Metal", "Hard Rock"]),    # Metallica – Enter Sandman
-]
-FEATURE_KEYS = [
-    "danceability", "energy", "speechiness", "acousticness",
-    "instrumentalness", "liveness", "valence", "tempo"
-]
-
-
-def _feature_vector_from_audio(feat):
-    return np.array([feat[k] for k in FEATURE_KEYS], dtype=float)
-
-
-def _fetch_audio_vector(sp_client, track_id):
-    if not track_id:
-        return None
-    if track_id in _audio_feature_cache:
-        return _audio_feature_cache[track_id]
-    try:
-        feat = sp_client.audio_features([track_id])[0]
-    except (spotipy.SpotifyException, requests.RequestException) as exc:
-        print(f"⚠️  Audio feature request failed for track {track_id}: {exc}")
-        return None
-    if feat:
-        _audio_feature_cache[track_id] = _feature_vector_from_audio(feat)
-        return _audio_feature_cache[track_id]
-    return None
-
-
-def _average_album_vector(sp_client, album_id):
-    if not album_id:
-        return None
-    try:
-        tracks = sp_client.album_tracks(album_id, limit=50).get("items", [])
-    except (spotipy.SpotifyException, requests.RequestException) as exc:
-        print(f"⚠️  Album track request failed for album {album_id}: {exc}")
-        return None
-    vectors = []
-    for track in tracks:
-        vec = _fetch_audio_vector(sp_client, track.get("id"))
-        if vec is not None:
-            vectors.append(vec)
-    return np.mean(vectors, axis=0) if vectors else None
-
-
-def _reference_vectors(sp_client):
-    vectors, genres = [], []
-    for tid, genre_list in REFERENCE_TRACKS:
-        vec = _fetch_audio_vector(sp_client, tid)
-        if vec is not None:
-            vectors.append(vec)
-            genres.append(genre_list)
-    return vectors, genres
-
-
-def infer_genres_from_audio(sp_client, track_id, album_id, top_n=3):
-    target_vec = _fetch_audio_vector(sp_client, track_id) or _average_album_vector(sp_client, album_id)
-    if target_vec is None:
-        return []
-    ref_vecs, ref_genres = _reference_vectors(sp_client)
-    if not ref_vecs:
-        return []
-    sims = cosine_similarity([target_vec], ref_vecs)[0]
-    ranked = np.argsort(sims)[::-1][:top_n]
-    seen, inferred = set(), []
-    for idx in ranked:
-        for genre in ref_genres[idx]:
-            if genre not in seen:
-                inferred.append(genre)
-                seen.add(genre)
-    return inferred
 
 def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
     cache_key = (album_id or album_name, artist_name)  # album id+artist avoids same-title clashes
@@ -281,12 +205,11 @@ def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
     if g:
         album_genre_cache[cache_key] = g
         return g
-    # 8) Audio feature fallback
-    inferred = infer_genres_from_audio(sp, track_id, album_id)
-    if inferred:
-        print(f"ℹ️ Fallback: inferred genres via audio similarity for '{song_name}' by {artist_name} -> {inferred}")
-        album_genre_cache[cache_key] = inferred
-        return inferred
+    # 8) Spotify track artists (direct lookup)
+    g = get_spotify_track_artist_genres(sp, track_id)
+    if g:
+        album_genre_cache[cache_key] = g
+        return g
     return []
 
 # -----------------------------
