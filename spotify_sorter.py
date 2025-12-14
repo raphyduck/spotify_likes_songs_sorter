@@ -162,44 +162,45 @@ def get_liked_songs():
 album_genre_cache = {}
 
 def get_best_genre(song_name, artist_name, album_name, album_id):
-    if album_name in album_genre_cache:
-        return album_genre_cache[album_name]
+    cache_key = (album_id or album_name, artist_name)  # album id+artist avoids same-title clashes
+    if cache_key in album_genre_cache:
+        return album_genre_cache[cache_key]
 
     clean_name = clean_album_name(album_name)
     # 1) Discogs
     g = get_discogs_album_info(clean_name, artist_name, DISCOGS_API_KEY)
     if g:
-        album_genre_cache[album_name] = g
+        album_genre_cache[cache_key] = g
         return g
     # 2) Last.fm album
     g = get_lastfm_album_info(clean_name, artist_name, LASTFM_API_KEY)
     if g:
-        album_genre_cache[album_name] = g
+        album_genre_cache[cache_key] = g
         return g
     # 3) MusicBrainz
     g = get_musicbrainz_album_info(clean_name, artist_name)
     if g:
-        album_genre_cache[album_name] = g
+        album_genre_cache[cache_key] = g
         return g
     # 4) Last.fm track
     g = get_lastfm_track_info(song_name, artist_name, LASTFM_API_KEY)
     if g:
-        album_genre_cache[album_name] = g
+        album_genre_cache[cache_key] = g
         return g
     # 5) Spotify album
     g = get_spotify_album_info(sp, album_id)
     if g:
-        album_genre_cache[album_name] = g
+        album_genre_cache[cache_key] = g
         return g
     # 6) Wikipedia
     g = get_wikipedia_album_info(clean_name, artist_name)
     if g:
-        album_genre_cache[album_name] = g
+        album_genre_cache[cache_key] = g
         return g
     # 7) Spotify artist
     g = get_spotify_artist_genres(sp, artist_name)
     if g:
-        album_genre_cache[album_name] = g
+        album_genre_cache[cache_key] = g
         return g
     return []
 
