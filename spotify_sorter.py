@@ -228,10 +228,8 @@ df = pd.DataFrame(songs_data)
 print("🔎 Fetching genres for songs (with shared helpers)...")
 progress_every = max(1, min(50, len(df) // 10 or 1))
 album_genres = []
-for idx, row in enumerate(df.itertuples(index=False), start=1):
-    album_genres.append(
-        get_best_genre(row.Song, row.Artist, row.Album, row.Album_ID, row.Spotify_Track_ID)
-    )
+for idx, (song, artist, album, album_id, *_rest, track_id) in enumerate(df.itertuples(index=False, name=None), start=1):
+    album_genres.append(get_best_genre(song, artist, album, album_id, track_id))
     if idx % progress_every == 0 or idx == len(df):
         print(f"  Processed {idx}/{len(df)} songs...")
 df["Album Genre"] = album_genres
