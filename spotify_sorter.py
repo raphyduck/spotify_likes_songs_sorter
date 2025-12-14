@@ -186,7 +186,11 @@ def _fetch_audio_vector(sp_client, track_id):
         return None
     if track_id in _audio_feature_cache:
         return _audio_feature_cache[track_id]
-    feat = sp_client.audio_features([track_id])[0]
+    try:
+        feat = sp_client.audio_features([track_id])[0]
+    except (spotipy.SpotifyException, requests.RequestException) as exc:
+        print(f"⚠️  Audio feature request failed for track {track_id}: {exc}")
+        return None
     if feat:
         _audio_feature_cache[track_id] = _feature_vector_from_audio(feat)
         return _audio_feature_cache[track_id]
@@ -196,10 +200,16 @@ def _fetch_audio_vector(sp_client, track_id):
 def _average_album_vector(sp_client, album_id):
     if not album_id:
         return None
-    tracks = sp_client.album_tracks(album_id, limit=50).get("items", [])
-    ids = [t.get("id") for t in tracks if t.get("id")]
-    feats = sp_client.audio_features(ids)
-    vectors = [_feature_vector_from_audio(f) for f in feats if f]
+    try:
+        tracks = sp_client.album_tracks(album_id, limit=50).get("items", [])
+    except (spotipy.SpotifyException, requests.RequestException) as exc:
+        print(f"⚠️  Album track request failed for album {album_id}: {exc}")
+        return None
+    vectors = []
+    for track in tracks:
+        vec = _fetch_audio_vector(sp_client, track.get("id"))
+        if vec is not None:
+            vectors.append(vec)
     return np.mean(vectors, axis=0) if vectors else None
 
 
