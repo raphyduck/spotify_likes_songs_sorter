@@ -168,6 +168,35 @@ def get_wikipedia_album_info(album_name, artist_name):
         pass
     return []
 
+def get_itunes_album_info(album_name, artist_name):
+    """
+    Query Apple iTunes Search for lightweight genre hints.
+    """
+    try:
+        params = {
+            "term": f"{album_name} {artist_name}",
+            "entity": "album",
+            "media": "music",
+            "limit": 3,
+        }
+        data = requests.get("https://itunes.apple.com/search", params=params, timeout=4).json()
+        for item in data.get("results", []):
+            if item.get("collectionType") != "Album":
+                continue
+            genres = []
+            if item.get("primaryGenreName"):
+                genres.append(item["primaryGenreName"])
+            genres.extend(item.get("genres", []))
+            if genres:
+                unique = []
+                for g in genres:
+                    if g and g not in unique:
+                        unique.append(g)
+                return clean_tags(unique)
+    except Exception:
+        pass
+    return []
+
 def get_spotify_artist_genres(sp, artist_name):
     """
     Fetch genres directly from the artist record on Spotify.
@@ -213,6 +242,7 @@ def lookup_genres(artist, album, song, album_id, cfg):
         ("Spotify Album",get_spotify_album_info(sp, album_id)),
         ("Wikipedia",    get_wikipedia_album_info(album, artist)),
         ("Spotify Artist", get_spotify_artist_genres(sp, artist)),
+        ("iTunes",       get_itunes_album_info(album, artist)),
     ])
 
 def normalize_and_sort_genres(genre_lists):

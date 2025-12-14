@@ -5,7 +5,7 @@ A small utility for Spotify users who maintain a large collection of liked songs
 ## Features
 
 - Fetches your liked songs directly from Spotify using the Web API.
-- Aggregates genre information for every album from Discogs, Last.fm, MusicBrainz, Spotify, Wikipedia, and more.
+- Aggregates genre information for every album from Discogs, Last.fm, MusicBrainz, Spotify, Wikipedia, iTunes Search, and more.
 - Clusters albums by genre similarity and produces a smoothly ordered playlist plus a CSV export of the final ordering.
 - Provides helper scripts for inspecting the resolved genres and fine-tuning your configuration.
 
@@ -39,6 +39,7 @@ A small utility for Spotify users who maintain a large collection of liked songs
    cp settings.ini.sample settings.ini
    ```
 2. Edit `settings.ini` and provide your Spotify Client ID, Client Secret, and redirect URI. Register **exactly** `http://127.0.0.1:8080/` as a Redirect URI in your Spotify Developer Dashboard and mirror the same value in `settings.ini` to match the console authorization flow.
+3. Optional: the iTunes Search fallback does not need credentials and will be used automatically when earlier providers cannot supply genres.
 
 ### Clustering and ordering
 
