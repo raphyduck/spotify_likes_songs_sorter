@@ -160,8 +160,74 @@ def get_liked_songs():
 #  Determine best genre using shared helpers
 # -----------------------------
 album_genre_cache = {}
+_audio_feature_cache = {}
 
-def get_best_genre(song_name, artist_name, album_name, album_id):
+REFERENCE_TRACKS = [
+    ("3n3Ppam7vgaVa1iaRUc9Lp", ["Pop", "Hip Hop"]),        # Outkast – Hey Ya!
+    ("4pbJqGIASGPr0ZpGpnWkDn", ["Rock", "Alternative"]),   # The Killers – Mr. Brightside
+    ("0VjIjW4GlUZAMYd2vXMi3b", ["Pop", "Dance"]),           # The Weeknd – Blinding Lights
+    ("7ouMYWpwJ422jRcDASZB7P", ["Metal", "Hard Rock"]),    # Metallica – Enter Sandman
+]
+FEATURE_KEYS = [
+    "danceability", "energy", "speechiness", "acousticness",
+    "instrumentalness", "liveness", "valence", "tempo"
+]
+
+
+def _feature_vector_from_audio(feat):
+    return np.array([feat[k] for k in FEATURE_KEYS], dtype=float)
+
+
+def _fetch_audio_vector(sp_client, track_id):
+    if not track_id:
+        return None
+    if track_id in _audio_feature_cache:
+        return _audio_feature_cache[track_id]
+    feat = sp_client.audio_features([track_id])[0]
+    if feat:
+        _audio_feature_cache[track_id] = _feature_vector_from_audio(feat)
+        return _audio_feature_cache[track_id]
+    return None
+
+
+def _average_album_vector(sp_client, album_id):
+    if not album_id:
+        return None
+    tracks = sp_client.album_tracks(album_id, limit=50).get("items", [])
+    ids = [t.get("id") for t in tracks if t.get("id")]
+    feats = sp_client.audio_features(ids)
+    vectors = [_feature_vector_from_audio(f) for f in feats if f]
+    return np.mean(vectors, axis=0) if vectors else None
+
+
+def _reference_vectors(sp_client):
+    vectors, genres = [], []
+    for tid, genre_list in REFERENCE_TRACKS:
+        vec = _fetch_audio_vector(sp_client, tid)
+        if vec is not None:
+            vectors.append(vec)
+            genres.append(genre_list)
+    return vectors, genres
+
+
+def infer_genres_from_audio(sp_client, track_id, album_id, top_n=3):
+    target_vec = _fetch_audio_vector(sp_client, track_id) or _average_album_vector(sp_client, album_id)
+    if target_vec is None:
+        return []
+    ref_vecs, ref_genres = _reference_vectors(sp_client)
+    if not ref_vecs:
+        return []
+    sims = cosine_similarity([target_vec], ref_vecs)[0]
+    ranked = np.argsort(sims)[::-1][:top_n]
+    seen, inferred = set(), []
+    for idx in ranked:
+        for genre in ref_genres[idx]:
+            if genre not in seen:
+                inferred.append(genre)
+                seen.add(genre)
+    return inferred
+
+def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
     cache_key = (album_id or album_name, artist_name)  # album id+artist avoids same-title clashes
     if cache_key in album_genre_cache:
         return album_genre_cache[cache_key]
@@ -202,6 +268,12 @@ def get_best_genre(song_name, artist_name, album_name, album_id):
     if g:
         album_genre_cache[cache_key] = g
         return g
+    # 8) Audio feature fallback
+    inferred = infer_genres_from_audio(sp, track_id, album_id)
+    if inferred:
+        print(f"ℹ️ Fallback: inferred genres via audio similarity for '{song_name}' by {artist_name} -> {inferred}")
+        album_genre_cache[cache_key] = inferred
+        return inferred
     return []
 
 # -----------------------------
@@ -213,7 +285,7 @@ df = pd.DataFrame(songs_data)
 print("🔎 Fetching genres for songs (with shared helpers)...")
 df["Album Genre"] = df.apply(
     lambda row: get_best_genre(
-        row["Song"], row["Artist"], row["Album"], row["Album ID"]
+        row["Song"], row["Artist"], row["Album"], row["Album ID"], row["Spotify Track ID"]
     ), axis=1
 )
 
