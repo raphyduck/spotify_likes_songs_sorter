@@ -12,3 +12,7 @@ API_KEY = api_key
 [GOOGLE_CSE]
 API_KEY = apikey
 CSE_ID  = cseid
+
+[CLUSTERING]
+segmentation_strength = 0.6
+max_clusters = 10

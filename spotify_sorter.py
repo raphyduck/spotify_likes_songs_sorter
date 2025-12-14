@@ -12,6 +12,7 @@ import requests
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.metrics import silhouette_score
 from sklearn.metrics.pairwise import cosine_similarity
 import networkx as nx
 from scipy.sparse.csgraph import minimum_spanning_tree
@@ -54,6 +55,8 @@ DISCOGS_API_KEY = config["DISCOGS"]["API_KEY"]
 LASTFM_API_KEY  = config["LASTFM"]["API_KEY"]
 GOOGLE_API_KEY  = config.get("GOOGLE_CSE", "API_KEY", fallback=None)
 CSE_ID           = config.get("GOOGLE_CSE", "CSE_ID", fallback=None)
+SEGMENTATION_STRENGTH = float(config.get("CLUSTERING", "segmentation_strength", fallback="0.6"))
+MAX_CLUSTERS          = int(config.get("CLUSTERING", "max_clusters", fallback="10"))
 
 CACHE_PATH = os.path.join(os.path.expanduser("~"), ".spotify_cache")
 
@@ -297,11 +300,8 @@ df["Unique Album"] = df["Album"] + " - " + df["Artist"]
 # -----------------------------
 unique_albums_df = df.drop_duplicates(subset=["Unique Album"]).copy()
 raw_lists = [g if isinstance(g, list) else [] for g in unique_albums_df["Album Genre"]]
-# Normalize and sort genre tags by frequency
 genre_sorted = normalize_and_sort_genres(raw_lists)
-# Store sorted genre strings
 unique_albums_df["Sorted Genres"] = [", ".join(sub) for sub in genre_sorted]
-# One‑hot encode
 genre_onehot = MultiLabelBinarizer().fit_transform(genre_sorted)
 
 sim = cosine_similarity(genre_onehot)
@@ -309,23 +309,57 @@ dist = 1.0 - sim
 mst = minimum_spanning_tree(dist).toarray()
 G = nx.from_numpy_array(mst)
 
-k = 5
 edges = sorted(G.edges(data=True), key=lambda x: x[2]["weight"], reverse=True)
-for u, v, w in edges[: k - 1]: G.remove_edge(u, v)
-components = list(nx.connected_components(G))
+weights = np.array([w["weight"] for *_, w in edges]) if edges else np.array([0.0])
+strength = float(np.clip(SEGMENTATION_STRENGTH, 0.0, 1.0))
 
-# Reassign tiny outliers
+def _components_for_k(k):
+    g = G.copy()
+    for u, v, _ in edges[: k - 1]:
+        g.remove_edge(u, v)
+    return list(nx.connected_components(g))
+
+labels_best, best_score = None, -1.0
+max_k = min(MAX_CLUSTERS, len(edges) + 1)
+if len(unique_albums_df) > 2 and max_k >= 2:
+    for k in range(2, max_k + 1):
+        comps = _components_for_k(k)
+        labels = [-1] * len(unique_albums_df)
+        for lbl, comp in enumerate(comps):
+            for idx in comp:
+                labels[idx] = lbl
+        try:
+            score = silhouette_score(dist, labels, metric="precomputed")
+        except ValueError:
+            continue
+        if score > best_score:
+            best_score, labels_best = score, labels
+
+if labels_best is None:
+    cutoff = np.quantile(weights, 0.55 + 0.35 * strength)
+    g = G.copy()
+    for u, v, w in edges:
+        if w["weight"] >= cutoff:
+            g.remove_edge(u, v)
+    components = list(nx.connected_components(g))
+else:
+    clusters = {}
+    for idx, lbl in enumerate(labels_best):
+        clusters.setdefault(lbl, set()).add(idx)
+    components = list(clusters.values())
+
 min_size = 3
 large_comps = [c for c in components if len(c) >= min_size]
 small_comps = [c for c in components if len(c) < min_size]
-final_comps = [set(c) for c in large_comps]
+final_comps = [set(c) for c in large_comps] or [set(c) for c in components] or [set(range(len(unique_albums_df)))]
 for small in small_comps:
     for idx in small:
         best_i = max(range(len(final_comps)), key=lambda i: np.mean([sim[idx, j] for j in final_comps[i]]))
         final_comps[best_i].add(idx)
 
-# Greedy chaining
-def greedy_chain(albums, sim_df, threshold_ratio=0.5):
+reset_factor = float(np.quantile(sim[np.triu_indices_from(sim, k=1)], 0.35 + 0.3 * strength)) if len(sim) > 1 else 0.5
+
+def greedy_chain(albums, sim_df, threshold_ratio):
     chain, prev_sim = [], 1.0
     sub = sim_df.loc[albums, albums]
     start = sub.mean(axis=1).idxmax(); chain.append(start)
@@ -344,7 +378,7 @@ album_similarity = pd.DataFrame(sim, index=unique_albums_df["Unique Album"], col
 sorted_albums = []
 for comp in final_comps:
     names = [unique_albums_df["Unique Album"].iloc[i] for i in comp]
-    sorted_albums.extend(greedy_chain(names, album_similarity))
+    sorted_albums.extend(greedy_chain(names, album_similarity, reset_factor))
 
 unique_albums_df["Sort Order"] = unique_albums_df["Unique Album"].apply(lambda x: sorted_albums.index(x))
 unique_albums_df = unique_albums_df.sort_values("Sort Order")
