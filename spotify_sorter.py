@@ -19,6 +19,7 @@ from urllib.parse import urlparse, parse_qs
 from genre_helpers import (
     clean_album_name,
     get_discogs_album_info,
+    get_itunes_album_info,
     get_lastfm_album_info,
     get_musicbrainz_album_info,
     get_lastfm_track_info,
@@ -207,6 +208,11 @@ def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
         return g
     # 8) Spotify track artists (direct lookup)
     g = get_spotify_track_artist_genres(sp, track_id)
+    if g:
+        album_genre_cache[cache_key] = g
+        return g
+    # 9) iTunes (final fallback)
+    g = get_itunes_album_info(clean_name, artist_name)
     if g:
         album_genre_cache[cache_key] = g
         return g

@@ -155,8 +155,14 @@ def get_wikipedia_album_info(album_name, artist_name):
     try:
         slug = quote_plus(f"{album_name} {artist_name}")
         url = f"https://en.wikipedia.org/wiki/{slug}"
-        html = requests.get(url, timeout=5).text
-        soup = BeautifulSoup(html, "html.parser")
+        resp = requests.get(
+            url,
+            timeout=4,
+            headers={"User-Agent": "SpotifySorter/1.0 (+github.com/spotify-likes-songs-sorter)"}
+        )
+        if resp.status_code >= 400:
+            return []
+        soup = BeautifulSoup(resp.text, "html.parser")
         info = soup.find("table", class_="infobox")
         if info:
             th = info.find("th", string="Genre")
