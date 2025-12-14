@@ -154,6 +154,7 @@ def get_liked_songs():
                 "Disc Number":  track["disc_number"],
                 "Spotify Track ID": track["id"]
             })
+        print(f"Fetched {len(liked_songs)} tracks...")
         results = sp.next(results) if results["next"] else None
         time.sleep(0.5)
 
