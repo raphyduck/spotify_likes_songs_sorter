@@ -16,6 +16,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import networkx as nx
 from scipy.sparse.csgraph import minimum_spanning_tree
 from urllib.parse import urlparse, parse_qs
+from tqdm import tqdm
 from genre_helpers import (
     clean_album_name,
     get_discogs_album_info,
@@ -140,23 +141,25 @@ print("✅ Authentication successful!\n")
 def get_liked_songs():
     liked_songs = []
     results = sp.current_user_saved_tracks(limit=50)
+    total = results.get("total", 0)
     print("🎵 Fetching liked songs from Spotify...")
 
-    while results:
-        for item in results["items"]:
-            track = item["track"]
-            liked_songs.append({
-                "Song": track["name"],
-                "Artist": track["artists"][0]["name"],
-                "Album": track["album"]["name"],
-                "Album ID": track["album"]["id"],
-                "Track Number": track["track_number"],
-                "Disc Number":  track["disc_number"],
-                "Spotify Track ID": track["id"]
-            })
-        print(f"Fetched {len(liked_songs)} tracks...")
-        results = sp.next(results) if results["next"] else None
-        time.sleep(0.5)
+    with tqdm(total=total, desc="Liked songs", unit="track") as pbar:
+        while results:
+            for item in results["items"]:
+                track = item["track"]
+                liked_songs.append({
+                    "Song": track["name"],
+                    "Artist": track["artists"][0]["name"],
+                    "Album": track["album"]["name"],
+                    "Album ID": track["album"]["id"],
+                    "Track Number": track["track_number"],
+                    "Disc Number":  track["disc_number"],
+                    "Spotify Track ID": track["id"]
+                })
+            pbar.update(len(results.get("items", [])))
+            results = sp.next(results) if results.get("next") else None
+            time.sleep(0.5)
 
     print(f"🎉 Retrieved {len(liked_songs)} songs!\n")
     return liked_songs
@@ -226,12 +229,11 @@ songs_data = get_liked_songs()
 df = pd.DataFrame(songs_data)
 
 print("🔎 Fetching genres for songs (with shared helpers)...")
-progress_every = max(1, min(50, len(df) // 10 or 1))
 album_genres = []
-for idx, (song, artist, album, album_id, *_rest, track_id) in enumerate(df.itertuples(index=False, name=None), start=1):
+for song, artist, album, album_id, *_rest, track_id in tqdm(
+    df.itertuples(index=False, name=None), total=len(df), desc="Genres", unit="track"
+):
     album_genres.append(get_best_genre(song, artist, album, album_id, track_id))
-    if idx % progress_every == 0 or idx == len(df):
-        print(f"  Processed {idx}/{len(df)} songs...")
 df["Album Genre"] = album_genres
 
 # Unique identifier
@@ -353,9 +355,8 @@ playlist_id = playlist["id"]
 print(f"\n🎯 Created playlist: {playlist_name} (ID: {playlist_id})")
 
 track_uris = ["spotify:track:" + tid for tid in final_df["Spotify Track ID"]]
-total_chunks = (len(track_uris) + 99) // 100
-for i, chunk in enumerate((track_uris[pos:pos+100] for pos in range(0, len(track_uris), 100)), 1):
-    print(f"Adding chunk {i}/{total_chunks}")
+chunks = [track_uris[pos:pos+100] for pos in range(0, len(track_uris), 100)]
+for chunk in tqdm(chunks, desc=f"Uploading {playlist_name}", unit="chunk"):
     sp.playlist_add_items(playlist_id, chunk)
     time.sleep(0.5)
 
