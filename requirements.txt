@@ -16,6 +16,7 @@ six==1.17.0
 soupsieve==2.8
 spotipy==2.25.1
 threadpoolctl==3.6.0
+tqdm==4.67.1
 typing_extensions==4.15.0
 tzdata==2025.2
 urllib3==2.5.0
