@@ -236,8 +236,9 @@ for song, artist, album, album_id, *_rest, track_id in tqdm(
     album_genres.append(get_best_genre(song, artist, album, album_id, track_id))
 df["Album Genre"] = album_genres
 
-# Unique identifier
-df["Unique Album"] = df["Album"] + " - " + df["Artist"]
+# Unique identifier - use Album ID to properly group compilation albums/soundtracks
+# where different tracks have different artists
+df["Unique Album"] = df["Album ID"]
 
 # -----------------------------
 #  MST‑based clustering + greedy chaining
