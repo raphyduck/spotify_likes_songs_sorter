@@ -175,52 +175,24 @@ def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
         return album_genre_cache[cache_key]
 
     clean_name = clean_album_name(album_name)
-    # 1) Discogs
-    g = get_discogs_album_info(clean_name, artist_name, DISCOGS_API_KEY)
-    if g:
-        album_genre_cache[cache_key] = g
-        return g
-    # 2) Last.fm album
-    g = get_lastfm_album_info(clean_name, artist_name, LASTFM_API_KEY)
-    if g:
-        album_genre_cache[cache_key] = g
-        return g
-    # 3) MusicBrainz
-    g = get_musicbrainz_album_info(clean_name, artist_name)
-    if g:
-        album_genre_cache[cache_key] = g
-        return g
-    # 4) Last.fm track
-    g = get_lastfm_track_info(song_name, artist_name, LASTFM_API_KEY)
-    if g:
-        album_genre_cache[cache_key] = g
-        return g
-    # 5) Spotify album
-    g = get_spotify_album_info(sp, album_id)
-    if g:
-        album_genre_cache[cache_key] = g
-        return g
-    # 6) Wikipedia
-    g = get_wikipedia_album_info(clean_name, artist_name)
-    if g:
-        album_genre_cache[cache_key] = g
-        return g
-    # 7) Spotify artist
-    g = get_spotify_artist_genres(sp, artist_name)
-    if g:
-        album_genre_cache[cache_key] = g
-        return g
-    # 8) Spotify track artists (direct lookup)
-    g = get_spotify_track_artist_genres(sp, track_id)
-    if g:
-        album_genre_cache[cache_key] = g
-        return g
-    # 9) iTunes (final fallback)
-    g = get_itunes_album_info(clean_name, artist_name)
-    if g:
-        album_genre_cache[cache_key] = g
-        return g
-    return []
+    providers = [
+        ("Discogs", lambda: get_discogs_album_info(clean_name, artist_name, DISCOGS_API_KEY)),
+        ("LastFM Album", lambda: get_lastfm_album_info(clean_name, artist_name, LASTFM_API_KEY)),
+        ("MusicBrainz", lambda: get_musicbrainz_album_info(clean_name, artist_name)),
+        ("LastFM Track", lambda: get_lastfm_track_info(song_name, artist_name, LASTFM_API_KEY)),
+        ("Spotify Album", lambda: get_spotify_album_info(sp, album_id)),
+        ("Wikipedia", lambda: get_wikipedia_album_info(clean_name, artist_name)),
+        ("Spotify Artist", lambda: get_spotify_artist_genres(sp, artist_name)),
+        ("Spotify Track Artist", lambda: get_spotify_track_artist_genres(sp, track_id)),
+        ("iTunes", lambda: get_itunes_album_info(clean_name, artist_name)),
+    ]
+    for source, lookup in providers:
+        genres = lookup()
+        if genres:
+            result = (genres, source)
+            album_genre_cache[cache_key] = result
+            return result
+    return [], "None"
 
 # -----------------------------
 # Main Processing
@@ -230,11 +202,15 @@ df = pd.DataFrame(songs_data)
 
 print("🔎 Fetching genres for songs (with shared helpers)...")
 album_genres = []
+album_genre_sources = []
 for song, artist, album, album_id, *_rest, track_id in tqdm(
     df.itertuples(index=False, name=None), total=len(df), desc="Genres", unit="track"
 ):
-    album_genres.append(get_best_genre(song, artist, album, album_id, track_id))
+    genres, source = get_best_genre(song, artist, album, album_id, track_id)
+    album_genres.append(genres)
+    album_genre_sources.append(source)
 df["Album Genre"] = album_genres
+df["source"] = album_genre_sources
 
 # Unique identifier - use Album ID to properly group compilation albums/soundtracks
 # where different tracks have different artists
