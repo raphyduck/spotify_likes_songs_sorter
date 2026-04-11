@@ -232,7 +232,7 @@ def get_spotify_track_artist_genres(sp, track_id):
         pass
     return []
 
-def lookup_genres(artist, album, song, album_id, cfg):
+def lookup_genres(artist, album, song, album_id, cfg, track_id=None):
     """
     Run each service in turn and return an OrderedDict of their results.
     """
@@ -240,16 +240,18 @@ def lookup_genres(artist, album, song, album_id, cfg):
         client_id=cfg["SPOTIFY"]["CLIENT_ID"],
         client_secret=cfg["SPOTIFY"]["CLIENT_SECRET"]
     ))
-    return OrderedDict([
-        ("Discogs",      get_discogs_album_info(album, artist, cfg["DISCOGS"]["API_KEY"])),
-        ("LastFM Album", get_lastfm_album_info(album, artist, cfg["LASTFM"]["API_KEY"])),
-        ("MusicBrainz",  get_musicbrainz_album_info(album, artist)),
-        ("LastFM Track", get_lastfm_track_info(song, artist, cfg["LASTFM"]["API_KEY"])),
-        ("Spotify Album",get_spotify_album_info(sp, album_id)),
-        ("Wikipedia",    get_wikipedia_album_info(album, artist)),
-        ("Spotify Artist", get_spotify_artist_genres(sp, artist)),
-        ("iTunes",       get_itunes_album_info(album, artist)),
-    ])
+    providers = [
+        ("Discogs", lambda: get_discogs_album_info(album, artist, cfg["DISCOGS"]["API_KEY"])),
+        *((("Spotify Album", lambda: get_spotify_album_info(sp, album_id)),) if album_id else ()),
+        *((("Spotify Track Artist", lambda: get_spotify_track_artist_genres(sp, track_id)),) if track_id else ()),
+        ("LastFM Album", lambda: get_lastfm_album_info(album, artist, cfg["LASTFM"]["API_KEY"])),
+        ("MusicBrainz", lambda: get_musicbrainz_album_info(album, artist)),
+        ("LastFM Track", lambda: get_lastfm_track_info(song, artist, cfg["LASTFM"]["API_KEY"])),
+        ("Spotify Artist", lambda: get_spotify_artist_genres(sp, artist)),
+        ("Wikipedia", lambda: get_wikipedia_album_info(album, artist)),
+        ("iTunes", lambda: get_itunes_album_info(album, artist)),
+    ]
+    return OrderedDict((name, lookup()) for name, lookup in providers)
 
 def normalize_and_sort_genres(genre_lists):
     """
@@ -259,4 +261,3 @@ def normalize_and_sort_genres(genre_lists):
     cleaned = [[g.strip().lower().title() for g in sub] for sub in genre_lists]
     counts = Counter(tag for sub in cleaned for tag in sub)
     return [sorted(sub, key=lambda t: counts[t], reverse=True) for sub in cleaned]
-

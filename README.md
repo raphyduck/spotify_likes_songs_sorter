@@ -77,17 +77,18 @@ Lower `segmentation_strength` values keep broader groups (fewer cuts), while hig
 
 ### Debugging Genres
 
-If you want to inspect genre data for specific artists or tracks, use the helper script. The script requires details about the artist, album, track, and Spotify album ID so that it can query the same metadata sources as the main sorter:
+If you want to inspect genre data for specific artists or tracks, use the helper script. It accepts optional Spotify IDs so it can follow the same provider order/conditions as the main sorter (`if album_id`, `if track_id`):
 
 ```bash
 python debug_genres.py \
   --artist "Radiohead" \
   --album "In Rainbows" \
   --song "Weird Fishes/Arpeggi" \
-  --album-id "5vkqYmiPBYLaalcmjujWxK"
+  --album-id "5vkqYmiPBYLaalcmjujWxK" \
+  --track-id "4wajJ1o7jWIg62YqpkHC7S"
 ```
 
-Replace the sample values with the artist/album/track you want to inspect (the album ID is available from the Spotify desktop or web client). The script will output available genre information and help you refine the genre configuration used by the main sorter.
+Replace the sample values with the artist/album/track you want to inspect (IDs are available from the Spotify desktop or web client). The output prints attempt order so you can quickly diagnose which providers were called and what each returned.
 
 ## Development
 
