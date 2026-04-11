@@ -4,8 +4,8 @@ A small utility for Spotify users who maintain a large collection of liked songs
 
 ## Features
 
-- Fetches your liked songs directly from Spotify using the Web API.
-- Keeps local liked tracks in the sorting/CSV output when Spotify returns them.
+- Fetches input tracks from either your liked songs or one/multiple playlists.
+- Keeps local tracks in the sorting/CSV output when Spotify returns them.
 - Aggregates genre information for every album from Discogs, Last.fm, MusicBrainz, Spotify, Wikipedia, iTunes Search, and more.
 - Clusters albums by genre similarity and produces a smoothly ordered playlist plus a CSV export of the final ordering.
 - Provides helper scripts for inspecting the resolved genres and fine-tuning your configuration.
@@ -40,6 +40,7 @@ A small utility for Spotify users who maintain a large collection of liked songs
    cp settings.ini.sample settings.ini
    ```
 2. Edit `settings.ini` and provide your Spotify Client ID, Client Secret, and redirect URI. Register **exactly** `http://127.0.0.1:8080/` as a Redirect URI in your Spotify Developer Dashboard and mirror the same value in `settings.ini` to match the console authorization flow.
+   The app requests scopes for liked songs, private profile, reading private playlists, and creating private playlists.
 3. Optional: the iTunes Search fallback does not need credentials and will be used automatically when earlier providers cannot supply genres.
 
 ### Clustering and ordering
@@ -65,10 +66,14 @@ Lower `segmentation_strength` values keep broader groups (fewer cuts), while hig
    ```bash
    python spotify_sorter.py
    ```
-3. Follow the console prompts to authenticate with Spotify. Once authenticated, the script will process your liked songs and create playlists based on your configuration.
+3. Follow the console prompts to authenticate with Spotify, then choose your source:
+   - `[1] Liked songs`
+   - `[2] Playlist(s)` (multi-select with comma-separated numbers, e.g. `1,3,5`)
+   - `[3] Liked songs + one playlist`
+4. The script then fetches tracks, sorts them by genre similarity, creates a private playlist, and exports a CSV.
 
 > Note: Spotify local files cannot be inserted into playlists through the Web API.  
-> The sorter still includes them in the CSV and ordering, then uploads only API-supported tracks.
+> The sorter still includes local tracks in sorting + CSV, logs them in the console, then uploads only tracks with valid Spotify IDs.
 
 ### Debugging Genres
 

@@ -50,6 +50,7 @@ if REDIRECT_URI.rstrip("/") + "/" != EXPECTED_REDIRECT_URI:
 SCOPES           = [
 "user-library-read",
 "user-read-private",
+"playlist-read-private",
 "playlist-modify-private"
 ]
 SCOPE = " ".join(SCOPES)
@@ -138,9 +139,65 @@ print("✅ Authentication successful!\n")
 # -----------------------------
 #  Fetch all liked songs from Spotify
 # -----------------------------
+def map_track_to_row(track):
+    if not track:
+        return None
+    artists = track.get("artists") or []
+    album = track.get("album") or {}
+    return {
+        "Song": track.get("name") or "Unknown Song",
+        "Artist": artists[0].get("name") if artists else "Unknown Artist",
+        "Album": album.get("name") or "Unknown Album",
+        "Album ID": album.get("id"),
+        "Track Number": track.get("track_number"),
+        "Disc Number":  track.get("disc_number"),
+        "Spotify Track ID": track.get("id"),
+        "Spotify URI": track.get("uri"),
+        "Is Local": bool(track.get("is_local", False)),
+    }
+
+def print_local_tracks_log(rows, source_label):
+    local_rows = [r for r in rows if r.get("Is Local")]
+    if not local_rows:
+        return
+    print(f"📁 Local tracks found in {source_label}: {len(local_rows)}")
+    for row in local_rows[:10]:
+        print(f"   • {row['Artist']} — {row['Song']} ({row['Album']})")
+    if len(local_rows) > 10:
+        print(f"   … and {len(local_rows) - 10} more local tracks.")
+    print()
+
+def track_dedupe_key(row):
+    return (
+        row.get("Spotify URI")
+        or row.get("Spotify Track ID")
+        or f"{row.get('Song')}|{row.get('Artist')}|{row.get('Album')}|{row.get('Track Number')}|{row.get('Disc Number')}"
+    )
+
+def dedupe_rows(rows):
+    seen = set()
+    deduped = []
+    for row in rows:
+        key = track_dedupe_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+def select_input_source():
+    print("Select source for sorting:")
+    print("  [1] Liked songs")
+    print("  [2] Playlist(s)")
+    print("  [3] Liked songs + one playlist")
+    while True:
+        choice = input("> Choice (1/2/3): ").strip()
+        if choice in {"1", "2", "3"}:
+            return choice
+        print("Invalid choice. Please enter 1, 2, or 3.")
+
 def get_liked_songs():
-    liked_songs = []
-    local_tracks = []
+    rows = []
     results = sp.current_user_saved_tracks(limit=50)
     total = results.get("total", 0)
     print("🎵 Fetching liked songs from Spotify...")
@@ -148,32 +205,72 @@ def get_liked_songs():
     with tqdm(total=total, desc="Liked songs", unit="track") as pbar:
         while results:
             for item in results["items"]:
-                track = item["track"]
-                is_local = bool(track.get("is_local", False))
-                liked_songs.append({
-                    "Song": track["name"],
-                    "Artist": track["artists"][0]["name"],
-                    "Album": track["album"]["name"],
-                    "Album ID": track["album"]["id"],
-                    "Track Number": track["track_number"],
-                    "Disc Number":  track["disc_number"],
-                    "Spotify Track ID": track["id"],
-                    "Spotify URI": track.get("uri"),
-                    "Is Local": is_local,
-                })
-                if is_local:
-                    local_tracks.append((track["name"], track["artists"][0]["name"], track["album"]["name"]))
+                row = map_track_to_row(item.get("track"))
+                if row:
+                    rows.append(row)
             pbar.update(len(results.get("items", [])))
             results = sp.next(results) if results.get("next") else None
             time.sleep(0.5)
 
-    print(f"🎉 Retrieved {len(liked_songs)} songs!\n")
-    if local_tracks:
-        print(f"📁 Local tracks found in liked songs: {len(local_tracks)}")
-        for song, artist, album in local_tracks:
-            print(f"   • {artist} — {song} ({album})")
-        print()
-    return liked_songs
+    print(f"🎉 Retrieved {len(rows)} songs!\n")
+    print_local_tracks_log(rows, "liked songs")
+    return rows
+
+def get_user_playlists():
+    playlists = []
+    results = sp.current_user_playlists(limit=50)
+    while results:
+        playlists.extend(results.get("items", []))
+        results = sp.next(results) if results.get("next") else None
+        time.sleep(0.2)
+    return playlists
+
+def choose_playlists(playlists):
+    if not playlists:
+        print("No playlists found on your account.")
+        sys.exit(1)
+
+    print("\nAvailable playlists:")
+    for idx, playlist in enumerate(playlists, start=1):
+        print(f"  [{idx}] {playlist.get('name', 'Untitled')} ({playlist.get('tracks', {}).get('total', 0)} tracks)")
+
+    while True:
+        raw = input("> Select one or more playlists (e.g. 1,3,5): ").strip()
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        if not parts or any(not p.isdigit() for p in parts):
+            print("Invalid input. Enter playlist numbers separated by commas.")
+            continue
+        indexes = sorted(set(int(p) for p in parts))
+        if indexes[0] < 1 or indexes[-1] > len(playlists):
+            print("Invalid selection. One or more numbers are out of range.")
+            continue
+        return [playlists[i - 1] for i in indexes]
+
+def choose_one_playlist(playlists):
+    return choose_playlists(playlists)[:1]
+
+def get_playlist_tracks(selected_playlists):
+    rows = []
+    print("🎵 Fetching tracks from selected playlist(s)...")
+    total = sum((p.get("tracks") or {}).get("total", 0) for p in selected_playlists)
+    with tqdm(total=total, desc="Playlist tracks", unit="track") as pbar:
+        for playlist in selected_playlists:
+            results = sp.playlist_items(playlist["id"], limit=100)
+            while results:
+                items = results.get("items", [])
+                for item in items:
+                    row = map_track_to_row(item.get("track"))
+                    if not row:
+                        continue
+                    rows.append(row)
+                pbar.update(len(items))
+                results = sp.next(results) if results.get("next") else None
+                time.sleep(0.2)
+
+    rows = dedupe_rows(rows)
+    print(f"🎉 Retrieved {len(rows)} unique songs from selected playlists!\n")
+    print_local_tracks_log(rows, "selected playlists")
+    return rows
 
 # -----------------------------
 #  Determine best genre using shared helpers
@@ -208,16 +305,41 @@ def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
 # -----------------------------
 # Main Processing
 # -----------------------------
-songs_data = get_liked_songs()
+source_choice = select_input_source()
+if source_choice == "1":
+    source_slug = "liked_songs"
+    source_label = "Liked songs"
+    songs_data = get_liked_songs()
+elif source_choice == "2":
+    source_slug = "selected_playlists"
+    playlists = get_user_playlists()
+    selected_playlists = choose_playlists(playlists)
+    source_label = "Playlists: " + ", ".join(p.get("name", "Untitled") for p in selected_playlists)
+    songs_data = get_playlist_tracks(selected_playlists)
+else:
+    source_slug = "liked_plus_playlist"
+    playlists = get_user_playlists()
+    selected_playlist = choose_one_playlist(playlists)[0]
+    source_label = f"Liked songs + {selected_playlist.get('name', 'Untitled')}"
+    songs_data = dedupe_rows(get_liked_songs() + get_playlist_tracks([selected_playlist]))
+    print(f"🎉 Combined source contains {len(songs_data)} unique songs.\n")
+
 df = pd.DataFrame(songs_data)
+if df.empty:
+    print("No tracks found for the selected source. Nothing to sort.")
+    sys.exit(0)
 
 print("🔎 Fetching genres for songs (with shared helpers)...")
 album_genres = []
 album_genre_sources = []
-for song, artist, album, album_id, *_rest, track_id in tqdm(
-    df.itertuples(index=False, name=None), total=len(df), desc="Genres", unit="track"
-):
-    genres, source = get_best_genre(song, artist, album, album_id, track_id)
+for row in tqdm(df.to_dict("records"), total=len(df), desc="Genres", unit="track"):
+    genres, source = get_best_genre(
+        row.get("Song"),
+        row.get("Artist"),
+        row.get("Album"),
+        row.get("Album ID"),
+        row.get("Spotify Track ID"),
+    )
     album_genres.append(genres)
     album_genre_sources.append(source)
 df["Album Genre"] = album_genres
@@ -334,8 +456,8 @@ current_user = sp.current_user()
 user_id = current_user["id"]
 
 current_date = datetime.today().strftime('%Y-%m-%d')
-playlist_name = f"Liked songs sorted {current_date}"
-playlist_description = "Playlist created by Spotify Sorter using album genre similarity."
+playlist_name = f"{source_label} sorted {current_date}"
+playlist_description = f"Playlist created by Spotify Sorter from {source_label.lower()} using album genre similarity."
 
 playlist = sp.user_playlist_create(user=user_id, name=playlist_name, public=False, description=playlist_description)
 playlist_id = playlist["id"]
@@ -352,7 +474,7 @@ for chunk in tqdm(chunks, desc=f"Uploading {playlist_name}", unit="chunk"):
     sp.playlist_add_items(playlist_id, chunk)
     time.sleep(0.5)
 
-csv_filename = f"liked_songs_sorted_{current_date}.csv"
+csv_filename = f"{source_slug}_sorted_{current_date}.csv"
 final_df.to_csv(csv_filename, index=False)
 print(f"\n📁 Sorted songs saved to CSV: {csv_filename}")
 if local_count:
