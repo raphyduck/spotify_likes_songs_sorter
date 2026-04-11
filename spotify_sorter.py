@@ -140,6 +140,7 @@ print("✅ Authentication successful!\n")
 # -----------------------------
 def get_liked_songs():
     liked_songs = []
+    local_tracks = []
     results = sp.current_user_saved_tracks(limit=50)
     total = results.get("total", 0)
     print("🎵 Fetching liked songs from Spotify...")
@@ -148,6 +149,7 @@ def get_liked_songs():
         while results:
             for item in results["items"]:
                 track = item["track"]
+                is_local = bool(track.get("is_local", False))
                 liked_songs.append({
                     "Song": track["name"],
                     "Artist": track["artists"][0]["name"],
@@ -157,13 +159,20 @@ def get_liked_songs():
                     "Disc Number":  track["disc_number"],
                     "Spotify Track ID": track["id"],
                     "Spotify URI": track.get("uri"),
-                    "Is Local": bool(track.get("is_local", False)),
+                    "Is Local": is_local,
                 })
+                if is_local:
+                    local_tracks.append((track["name"], track["artists"][0]["name"], track["album"]["name"]))
             pbar.update(len(results.get("items", [])))
             results = sp.next(results) if results.get("next") else None
             time.sleep(0.5)
 
     print(f"🎉 Retrieved {len(liked_songs)} songs!\n")
+    if local_tracks:
+        print(f"📁 Local tracks found in liked songs: {len(local_tracks)}")
+        for song, artist, album in local_tracks:
+            print(f"   • {artist} — {song} ({album})")
+        print()
     return liked_songs
 
 # -----------------------------
