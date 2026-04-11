@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import configparser
+import re
 from datetime import datetime
 
 import pandas as pd
@@ -50,6 +51,7 @@ if REDIRECT_URI.rstrip("/") + "/" != EXPECTED_REDIRECT_URI:
 SCOPES           = [
 "user-library-read",
 "user-read-private",
+"playlist-read-private",
 "playlist-modify-private"
 ]
 SCOPE = " ".join(SCOPES)
@@ -135,11 +137,29 @@ sp = get_spotify_client_console(
 )
 print("✅ Authentication successful!\n")
 
+def build_song_row(track):
+    if not track:
+        return None
+    artists = track.get("artists", [])
+    album = track.get("album", {})
+    return {
+        "Song": track.get("name", "Unknown title"),
+        "Artist": artists[0].get("name", "Unknown artist") if artists else "Unknown artist",
+        "Album": album.get("name", "Unknown album"),
+        "Album ID": album.get("id"),
+        "Track Number": track.get("track_number", 0),
+        "Disc Number": track.get("disc_number", 0),
+        "Spotify Track ID": track.get("id"),
+        "Spotify URI": track.get("uri"),
+        "Is Local": bool(track.get("is_local", False)),
+    }
+
 # -----------------------------
-#  Fetch all liked songs from Spotify
+#  Fetch songs from chosen source
 # -----------------------------
 def get_liked_songs():
-    liked_songs = []
+    songs = []
+    local_tracks = []
     results = sp.current_user_saved_tracks(limit=50)
     total = results.get("total", 0)
     print("🎵 Fetching liked songs from Spotify...")
@@ -147,22 +167,77 @@ def get_liked_songs():
     with tqdm(total=total, desc="Liked songs", unit="track") as pbar:
         while results:
             for item in results["items"]:
-                track = item["track"]
-                liked_songs.append({
-                    "Song": track["name"],
-                    "Artist": track["artists"][0]["name"],
-                    "Album": track["album"]["name"],
-                    "Album ID": track["album"]["id"],
-                    "Track Number": track["track_number"],
-                    "Disc Number":  track["disc_number"],
-                    "Spotify Track ID": track["id"]
-                })
+                song = build_song_row(item.get("track"))
+                if not song:
+                    continue
+                songs.append(song)
+                if song["Is Local"]:
+                    local_tracks.append((song["Song"], song["Artist"], song["Album"]))
             pbar.update(len(results.get("items", [])))
             results = sp.next(results) if results.get("next") else None
             time.sleep(0.5)
 
-    print(f"🎉 Retrieved {len(liked_songs)} songs!\n")
-    return liked_songs
+    print(f"🎉 Retrieved {len(songs)} songs!\n")
+    if local_tracks:
+        print(f"📁 Local tracks found in liked songs: {len(local_tracks)}")
+        for song, artist, album in local_tracks:
+            print(f"   • {artist} — {song} ({album})")
+        print()
+    return songs
+
+def get_playlist_songs():
+    playlists = []
+    results = sp.current_user_playlists(limit=50)
+    while results:
+        playlists.extend(results.get("items", []))
+        results = sp.next(results) if results.get("next") else None
+    if not playlists:
+        print("No playlists found on this account.")
+        return [], "playlist"
+
+    print("\n📚 Choose source playlist(s):")
+    for idx, pl in enumerate(playlists, start=1):
+        print(f"  {idx}. {pl['name']} ({pl['tracks']['total']} tracks)")
+    print("  Example: 1,3,5")
+    while True:
+        choice = input("Select playlist number(s): ").strip()
+        picked = [c.strip() for c in choice.split(",") if c.strip()]
+        if picked and all(c.isdigit() and 1 <= int(c) <= len(playlists) for c in picked):
+            break
+        print("Invalid choice. Please enter valid number(s), comma-separated.")
+    selected = [playlists[int(c) - 1] for c in dict.fromkeys(picked)]
+
+    songs = []
+    local_tracks = []
+    seen = set()
+    total = sum(pl.get("tracks", {}).get("total", 0) for pl in selected)
+    with tqdm(total=total, desc="Playlist tracks", unit="track") as pbar:
+        for pl in selected:
+            print(f"\n🎵 Fetching tracks from playlist: {pl['name']}")
+            results = sp.playlist_items(pl["id"], limit=100)
+            while results:
+                for item in results.get("items", []):
+                    song = build_song_row(item.get("track"))
+                    if not song:
+                        continue
+                    dedup_key = (song["Spotify URI"], song["Song"], song["Artist"], song["Album"])
+                    if dedup_key in seen:
+                        continue
+                    seen.add(dedup_key)
+                    songs.append(song)
+                    if song["Is Local"]:
+                        local_tracks.append((song["Song"], song["Artist"], song["Album"]))
+                pbar.update(len(results.get("items", [])))
+                results = sp.next(results) if results.get("next") else None
+                time.sleep(0.5)
+
+    print(f"🎉 Retrieved {len(songs)} unique songs from {len(selected)} playlist(s)!\n")
+    if local_tracks:
+        print(f"📁 Local tracks found in playlist source: {len(local_tracks)}")
+        for song, artist, album in local_tracks:
+            print(f"   • {artist} — {song} ({album})")
+        print()
+    return songs, "playlists_multi"
 
 # -----------------------------
 #  Determine best genre using shared helpers
@@ -180,12 +255,14 @@ def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
         ("LastFM Album", lambda: get_lastfm_album_info(clean_name, artist_name, LASTFM_API_KEY)),
         ("MusicBrainz", lambda: get_musicbrainz_album_info(clean_name, artist_name)),
         ("LastFM Track", lambda: get_lastfm_track_info(song_name, artist_name, LASTFM_API_KEY)),
-        ("Spotify Album", lambda: get_spotify_album_info(sp, album_id)),
         ("Wikipedia", lambda: get_wikipedia_album_info(clean_name, artist_name)),
         ("Spotify Artist", lambda: get_spotify_artist_genres(sp, artist_name)),
-        ("Spotify Track Artist", lambda: get_spotify_track_artist_genres(sp, track_id)),
         ("iTunes", lambda: get_itunes_album_info(clean_name, artist_name)),
     ]
+    if album_id:
+        providers.insert(4, ("Spotify Album", lambda: get_spotify_album_info(sp, album_id)))
+    if track_id:
+        providers.insert(-1, ("Spotify Track Artist", lambda: get_spotify_track_artist_genres(sp, track_id)))
     for source, lookup in providers:
         genres = lookup()
         if genres:
@@ -197,7 +274,12 @@ def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
 # -----------------------------
 # Main Processing
 # -----------------------------
-songs_data = get_liked_songs()
+print("Choose source: [1] Liked songs  [2] Spotify playlist(s)")
+source_choice = input("Your choice (default 1): ").strip() or "1"
+if source_choice == "2":
+    songs_data, source_label = get_playlist_songs()
+else:
+    songs_data, source_label = get_liked_songs(), "liked"
 df = pd.DataFrame(songs_data)
 
 print("🔎 Fetching genres for songs (with shared helpers)...")
@@ -212,9 +294,8 @@ for song, artist, album, album_id, *_rest, track_id in tqdm(
 df["Album Genre"] = album_genres
 df["source"] = album_genre_sources
 
-# Unique identifier - use Album ID to properly group compilation albums/soundtracks
-# where different tracks have different artists
-df["Unique Album"] = df["Album ID"]
+# Unique identifier - use Album ID when available, fallback for local tracks
+df["Unique Album"] = df["Album ID"].fillna(df["Album"] + " - " + df["Artist"])
 
 # -----------------------------
 #  MST‑based clustering + greedy chaining
@@ -324,20 +405,30 @@ current_user = sp.current_user()
 user_id = current_user["id"]
 
 current_date = datetime.today().strftime('%Y-%m-%d')
-playlist_name = f"Liked songs sorted {current_date}"
+playlist_name = f"{source_label} sorted {current_date}"
 playlist_description = "Playlist created by Spotify Sorter using album genre similarity."
 
 playlist = sp.user_playlist_create(user=user_id, name=playlist_name, public=False, description=playlist_description)
 playlist_id = playlist["id"]
 print(f"\n🎯 Created playlist: {playlist_name} (ID: {playlist_id})")
 
-track_uris = ["spotify:track:" + tid for tid in final_df["Spotify Track ID"]]
+track_uris = [
+    f"spotify:track:{tid}"
+    for tid in final_df["Spotify Track ID"]
+    if isinstance(tid, str) and tid
+]
+local_count = int(final_df["Is Local"].sum()) if "Is Local" in final_df else 0
 chunks = [track_uris[pos:pos+100] for pos in range(0, len(track_uris), 100)]
 for chunk in tqdm(chunks, desc=f"Uploading {playlist_name}", unit="chunk"):
     sp.playlist_add_items(playlist_id, chunk)
     time.sleep(0.5)
 
-csv_filename = f"liked_songs_sorted_{current_date}.csv"
+csv_filename = f"{source_label}_sorted_{current_date}.csv"
 final_df.to_csv(csv_filename, index=False)
 print(f"\n📁 Sorted songs saved to CSV: {csv_filename}")
+if local_count:
+    print(
+        f"\n⚠️ {local_count} local track(s) were kept in the CSV/sorting output "
+        "but could not be added to the playlist through the Spotify Web API."
+    )
 print(f"\n✅ Playlist '{playlist_name}' created successfully with {len(track_uris)} tracks!")

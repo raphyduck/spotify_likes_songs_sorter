@@ -5,6 +5,8 @@ A small utility for Spotify users who maintain a large collection of liked songs
 ## Features
 
 - Fetches your liked songs directly from Spotify using the Web API.
+- Can also use one or multiple Spotify playlists as input source (useful when local tracks are present there).
+- Keeps local liked tracks in the sorting/CSV output when Spotify returns them.
 - Aggregates genre information for every album from Discogs, Last.fm, MusicBrainz, Spotify, Wikipedia, iTunes Search, and more.
 - Clusters albums by genre similarity and produces a smoothly ordered playlist plus a CSV export of the final ordering.
 - Provides helper scripts for inspecting the resolved genres and fine-tuning your configuration.
@@ -64,7 +66,13 @@ Lower `segmentation_strength` values keep broader groups (fewer cuts), while hig
    ```bash
    python spotify_sorter.py
    ```
-3. Follow the console prompts to authenticate with Spotify. Once authenticated, the script will process your liked songs and create playlists based on your configuration.
+3. Follow the console prompts to authenticate with Spotify, then choose the source:
+   - your Liked Songs, or
+   - one or multiple Spotify playlists (comma-separated selection).
+   The script will process the selected source and create a sorted playlist.
+
+> Note: Spotify local files cannot be inserted into playlists through the Web API.  
+> The sorter still includes them in the CSV and ordering, then uploads only API-supported tracks.
 
 ### Debugging Genres
 
