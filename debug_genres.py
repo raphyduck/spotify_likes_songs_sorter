@@ -12,7 +12,8 @@ def main():
     parser.add_argument("--artist",    required=True, help="Artist name")
     parser.add_argument("--album",     required=True, help="Album title")
     parser.add_argument("--song",      required=True, help="Song name")
-    parser.add_argument("--album-id",  required=True, help="Spotify album ID")
+    parser.add_argument("--album-id",  default=None, help="Spotify album ID (optional)")
+    parser.add_argument("--track-id",  default=None, help="Spotify track ID (optional)")
     parser.add_argument("--config",    default="settings.ini", help="Path to settings.ini")
     parser.add_argument("--debug",     action="store_true", help="Enable HTTP request/response debug output")
     args = parser.parse_args()
@@ -47,16 +48,17 @@ def main():
             "DISCOGS":  config["DISCOGS"],
             "LASTFM":   config["LASTFM"],
             **({"GOOGLE_CSE": config["GOOGLE_CSE"]} if "GOOGLE_CSE" in config else {})
-        }
+        },
+        track_id=args.track_id,
     )
 
     # Print results
     print("\nGenre lookup results:")
-    for source, genres in results.items():
+    for idx, (source, genres) in enumerate(results.items(), start=1):
         if args.debug:
-            print(f"[{source}] returned {genres}")
+            print(f"[{idx:02d}] [{source}] returned {genres}")
         else:
-            print(f"{source}: {genres if genres else 'None found'}")
+            print(f"[{idx:02d}] {source}: {genres if genres else 'None found'}")
 
 if __name__ == "__main__":
     main()
