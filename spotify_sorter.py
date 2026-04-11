@@ -188,17 +188,15 @@ def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
     clean_name = clean_album_name(album_name)
     providers = [
         ("Discogs", lambda: get_discogs_album_info(clean_name, artist_name, DISCOGS_API_KEY)),
+        *((("Spotify Album", lambda: get_spotify_album_info(sp, album_id)),) if album_id else ()),
+        *((("Spotify Track Artist", lambda: get_spotify_track_artist_genres(sp, track_id)),) if track_id else ()),
         ("LastFM Album", lambda: get_lastfm_album_info(clean_name, artist_name, LASTFM_API_KEY)),
         ("MusicBrainz", lambda: get_musicbrainz_album_info(clean_name, artist_name)),
         ("LastFM Track", lambda: get_lastfm_track_info(song_name, artist_name, LASTFM_API_KEY)),
-        ("Wikipedia", lambda: get_wikipedia_album_info(clean_name, artist_name)),
         ("Spotify Artist", lambda: get_spotify_artist_genres(sp, artist_name)),
+        ("Wikipedia", lambda: get_wikipedia_album_info(clean_name, artist_name)),
         ("iTunes", lambda: get_itunes_album_info(clean_name, artist_name)),
     ]
-    if album_id:
-        providers.insert(4, ("Spotify Album", lambda: get_spotify_album_info(sp, album_id)))
-    if track_id:
-        providers.insert(-1, ("Spotify Track Artist", lambda: get_spotify_track_artist_genres(sp, track_id)))
     for source, lookup in providers:
         genres = lookup()
         if genres:
