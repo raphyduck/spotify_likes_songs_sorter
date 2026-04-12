@@ -70,7 +70,7 @@ Lower `segmentation_strength` values keep broader groups (fewer cuts), while hig
    - `[1] Liked songs`
    - `[2] Playlist(s)` (multi-select with comma-separated numbers, e.g. `1,3,5`)
    - `[3] Liked songs + one playlist`
-4. The script then fetches tracks, sorts them by genre similarity, creates a private playlist, and exports a CSV.
+4. The script then fetches tracks, sorts them by genre similarity, creates a private playlist named `liked songs sorted YYYY-MM-DD`, and exports a CSV.
 
 > Note: Spotify local files cannot be inserted into playlists through the Web API.  
 > The sorter still includes local tracks in sorting + CSV, logs them in the console, then uploads only tracks with valid Spotify IDs.

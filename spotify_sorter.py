@@ -456,7 +456,7 @@ current_user = sp.current_user()
 user_id = current_user["id"]
 
 current_date = datetime.today().strftime('%Y-%m-%d')
-playlist_name = f"{source_label} sorted {current_date}"
+playlist_name = f"liked songs sorted {current_date}"
 playlist_description = f"Playlist created by Spotify Sorter from {source_label.lower()} using album genre similarity."
 
 playlist = sp.user_playlist_create(user=user_id, name=playlist_name, public=False, description=playlist_description)
