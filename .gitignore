@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local configuration & auth caches (never commit secrets)
+settings.ini
+.cache*
+.tidal_sorter_session.json
+
+# Generated output
+*_sorted_*.csv
