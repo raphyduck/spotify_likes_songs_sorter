@@ -1,7 +1,7 @@
-[SPOTIFY]
-CLIENT_ID = clientid
-CLIENT_SECRET = clientsecret
-REDIRECT_URI = http://127.0.0.1:8080/
+[TIDAL]
+; Optional. Path where the OAuth session is cached so you only authorize once.
+; Defaults to ~/.tidal_sorter_session.json when omitted.
+; session_file = ~/.tidal_sorter_session.json
 
 [LASTFM]
 API_KEY = api_key
@@ -9,12 +9,9 @@ API_KEY = api_key
 [DISCOGS]
 API_KEY = api_key
 
-[GOOGLE_CSE]
-API_KEY = apikey
-CSE_ID  = cseid
-
 [CLUSTERING]
 segmentation_strength = 0.6
 max_clusters = 10
 
-; iTunes Search fallback requires no API key and needs no configuration.
+; Tidal authentication uses the built-in device OAuth flow and needs no
+; client id/secret. The iTunes Search fallback also requires no API key.

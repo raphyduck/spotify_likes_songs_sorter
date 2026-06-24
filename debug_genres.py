@@ -12,8 +12,6 @@ def main():
     parser.add_argument("--artist",    required=True, help="Artist name")
     parser.add_argument("--album",     required=True, help="Album title")
     parser.add_argument("--song",      required=True, help="Song name")
-    parser.add_argument("--album-id",  default=None, help="Spotify album ID (optional)")
-    parser.add_argument("--track-id",  default=None, help="Spotify track ID (optional)")
     parser.add_argument("--config",    default="settings.ini", help="Path to settings.ini")
     parser.add_argument("--debug",     action="store_true", help="Enable HTTP request/response debug output")
     args = parser.parse_args()
@@ -42,14 +40,10 @@ def main():
         args.artist,
         clean_album_name(args.album),
         args.song,
-        args.album_id,
         {
-            "SPOTIFY":  config["SPOTIFY"],
             "DISCOGS":  config["DISCOGS"],
             "LASTFM":   config["LASTFM"],
-            **({"GOOGLE_CSE": config["GOOGLE_CSE"]} if "GOOGLE_CSE" in config else {})
         },
-        track_id=args.track_id,
     )
 
     # Print results

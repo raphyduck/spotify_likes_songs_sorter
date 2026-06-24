@@ -1,21 +1,20 @@
-__version__ = "1.4.1"
+__version__ = "2.0.0"
 
 import os
 import sys
 import time
 import configparser
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
-import spotipy
-from spotipy.oauth2 import SpotifyOAuth
+import tidalapi
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.metrics import silhouette_score
 from sklearn.metrics.pairwise import cosine_similarity
 import networkx as nx
 from scipy.sparse.csgraph import minimum_spanning_tree
-from urllib.parse import urlparse, parse_qs
 from tqdm import tqdm
 from genre_helpers import (
     clean_album_name,
@@ -25,9 +24,6 @@ from genre_helpers import (
     get_musicbrainz_album_info,
     get_lastfm_track_info,
     get_wikipedia_album_info,
-    get_spotify_album_info,
-    get_spotify_artist_genres,
-    get_spotify_track_artist_genres,
     normalize_and_sort_genres)
 
 # -----------------------------
@@ -36,141 +32,79 @@ from genre_helpers import (
 config = configparser.ConfigParser()
 config.read("settings.ini")
 
-CLIENT_ID       = config["SPOTIFY"]["CLIENT_ID"]
-CLIENT_SECRET   = config["SPOTIFY"]["CLIENT_SECRET"]
-REDIRECT_URI    = config["SPOTIFY"]["REDIRECT_URI"]
-EXPECTED_REDIRECT_URI = "http://127.0.0.1:8080/"
-if REDIRECT_URI.rstrip("/") + "/" != EXPECTED_REDIRECT_URI:
-    print(
-        "ERROR: The console authorization flow requires the redirect URI to be set to"
-        f" {EXPECTED_REDIRECT_URI}. Please update settings.ini and your Spotify"
-        " Developer Dashboard to match."
-    )
-    sys.exit(1)
-SCOPES           = [
-"user-library-read",
-"user-read-private",
-"playlist-read-private",
-"playlist-modify-private"
-]
-SCOPE = " ".join(SCOPES)
 DISCOGS_API_KEY = config["DISCOGS"]["API_KEY"]
 LASTFM_API_KEY  = config["LASTFM"]["API_KEY"]
-GOOGLE_API_KEY  = config.get("GOOGLE_CSE", "API_KEY", fallback=None)
-CSE_ID           = config.get("GOOGLE_CSE", "CSE_ID", fallback=None)
 SEGMENTATION_STRENGTH = float(config.get("CLUSTERING", "segmentation_strength", fallback="0.6"))
 MAX_CLUSTERS          = int(config.get("CLUSTERING", "max_clusters", fallback="10"))
 
-CACHE_PATH = os.path.join(os.path.expanduser("~"), ".spotify_cache")
-
-# -----------------------------
-#  Authenticate with Spotify
-# -----------------------------
-print("\n🔄 Authenticating with Spotify...")
-# --- auth_console.py style helper, à coller dans spotify_sorter.py ---
-
-def get_spotify_client_console(scope: str,
-                               client_id: str,
-                               client_secret: str,
-                               cache_path: str = ".cache") -> spotipy.Spotify:
-    """
-    Auth console-only (pas de serveur local, pas de port). 
-    Nécessite que 'http://127.0.0.1:8080/' soit ajouté dans les Redirect URIs du dashboard Spotify.
-    """
-    oauth = SpotifyOAuth(
-        client_id=client_id,
-        client_secret=client_secret,
-        redirect_uri=REDIRECT_URI,
-        scope=scope,
-        open_browser=False,                  # n’essaie pas d’ouvrir un navigateur
-        cache_path=cache_path,
-    )
-
-    # 1) Tente d’utiliser le token en cache si existant
-    token_info = oauth.validate_token(oauth.cache_handler.get_cached_token())
-    if token_info:
-        return spotipy.Spotify(auth_manager=oauth)
-
-    # 2) Sinon, on lance un flow manuel
-    auth_url = oauth.get_authorize_url()
-    redirect_in_url = parse_qs(urlparse(auth_url).query).get("redirect_uri", [""])[0]
-    if redirect_in_url.rstrip("/") + "/" != EXPECTED_REDIRECT_URI:
-        print(
-            "ERROR: Generated authorize URL does not match the expected redirect"
-            f" URI ({EXPECTED_REDIRECT_URI}), which can lead to INVALID_CLIENT."
-            " Confirm your settings.ini and Spotify app redirect URI both use this"
-            " exact value."
-        )
-        sys.exit(1)
-    print("\n=== Spotify OAuth (mode console) ===")
-    print("1) Ouvre cette URL dans un navigateur (copie/colle) :\n")
-    print(auth_url)
-    print("\n2) Connecte-toi, autorise l’app, puis COPIE/COLLE ICI l’URL complète de redirection (celle qui commence par http://127.0.0.1:8080/ ...):\n")
-    try:
-        redirected_url = input("> URL de redirection: ").strip()
-    except EOFError:
-        print("Entrée manquante. Relance le script et colle l’URL de redirection.", file=sys.stderr)
-        sys.exit(1)
-
-    # 3) Extraction du ?code=...
-    parsed = urlparse(redirected_url)
-    code_list = parse_qs(parsed.query).get("code")
-    if not code_list:
-        print("Aucun 'code' trouvé dans l’URL. Vérifie que tu as bien collé l’URL complète.", file=sys.stderr)
-        sys.exit(1)
-    code = code_list[0]
-
-    # 4) Échange code -> access_token
-    token_info = oauth.get_access_token(code, as_dict=True)
-    if not token_info or "access_token" not in token_info:
-        print("Impossible d’obtenir un access_token.", file=sys.stderr)
-        sys.exit(1)
-
-    return spotipy.Spotify(auth_manager=oauth)
-
-sp = get_spotify_client_console(
-    scope=SCOPE,
-    client_id=CLIENT_ID,
-    client_secret=CLIENT_SECRET,
-    cache_path=".cache-spotify-sorter"
+# Tidal's OAuth device flow does not require a developer client id/secret; it
+# uses the built-in TV/device client. The resulting session is cached here so
+# you only have to authorize once.
+SESSION_FILE = Path(
+    config.get("TIDAL", "session_file", fallback=None)
+    or os.path.join(os.path.expanduser("~"), ".tidal_sorter_session.json")
 )
+
+# -----------------------------
+#  Authenticate with Tidal
+# -----------------------------
+print("\n🔄 Authenticating with Tidal...")
+
+def get_tidal_session(session_file: Path) -> tidalapi.Session:
+    """
+    Console-only OAuth using Tidal's device authorization flow.
+
+    `login_session_file` reuses a cached session when present (refreshing the
+    access token automatically), and otherwise prints a link.tidal.com URL for
+    you to open and authorize before polling for completion. No local web
+    server or redirect URI is required.
+    """
+    session = tidalapi.Session()
+    print("\n=== Tidal OAuth (console mode) ===")
+    print("If no cached session is found, open the link printed below in a")
+    print("browser, log in, and authorize the device. Authorization is then")
+    print("detected automatically.\n")
+    session.login_session_file(session_file)
+    if not session.check_login():
+        print("❌ Tidal authentication failed. Please retry.", file=sys.stderr)
+        sys.exit(1)
+    return session
+
+sp = get_tidal_session(SESSION_FILE)
 print("✅ Authentication successful!\n")
 
 # -----------------------------
-#  Fetch all liked songs from Spotify
+#  Map Tidal tracks to flat rows
 # -----------------------------
 def map_track_to_row(track):
     if not track:
         return None
-    artists = track.get("artists") or []
-    album = track.get("album") or {}
-    return {
-        "Song": track.get("name") or "Unknown Song",
-        "Artist": artists[0].get("name") if artists else "Unknown Artist",
-        "Album": album.get("name") or "Unknown Album",
-        "Album ID": album.get("id"),
-        "Track Number": track.get("track_number"),
-        "Disc Number":  track.get("disc_number"),
-        "Spotify Track ID": track.get("id"),
-        "Spotify URI": track.get("uri"),
-        "Is Local": bool(track.get("is_local", False)),
-    }
+    try:
+        if getattr(track, "artist", None) and track.artist.name:
+            artist_name = track.artist.name
+        elif getattr(track, "artists", None):
+            artist_name = track.artists[0].name
+        else:
+            artist_name = "Unknown Artist"
+    except Exception:
+        artist_name = "Unknown Artist"
 
-def print_local_tracks_log(rows, source_label):
-    local_rows = [r for r in rows if r.get("Is Local")]
-    if not local_rows:
-        return
-    print(f"📁 Local tracks found in {source_label}: {len(local_rows)}")
-    for row in local_rows[:10]:
-        print(f"   • {row['Artist']} — {row['Song']} ({row['Album']})")
-    if len(local_rows) > 10:
-        print(f"   … and {len(local_rows) - 10} more local tracks.")
-    print()
+    album = getattr(track, "album", None)
+    album_name = getattr(album, "name", None) or "Unknown Album"
+    album_id = getattr(album, "id", None)
+    return {
+        "Song": getattr(track, "name", None) or "Unknown Song",
+        "Artist": artist_name,
+        "Album": album_name,
+        "Album ID": str(album_id) if album_id is not None else None,
+        "Track Number": getattr(track, "track_num", None),
+        "Disc Number":  getattr(track, "volume_num", None),
+        "Tidal Track ID": str(track.id) if getattr(track, "id", None) is not None else None,
+    }
 
 def track_dedupe_key(row):
     return (
-        row.get("Spotify URI")
-        or row.get("Spotify Track ID")
+        row.get("Tidal Track ID")
         or f"{row.get('Song')}|{row.get('Artist')}|{row.get('Album')}|{row.get('Track Number')}|{row.get('Disc Number')}"
     )
 
@@ -187,43 +121,57 @@ def dedupe_rows(rows):
 
 def select_input_source():
     print("Select source for sorting:")
-    print("  [1] Liked songs")
+    print("  [1] Favorite tracks")
     print("  [2] Playlist(s)")
-    print("  [3] Liked songs + one playlist")
+    print("  [3] Favorite tracks + one playlist")
     while True:
         choice = input("> Choice (1/2/3): ").strip()
         if choice in {"1", "2", "3"}:
             return choice
         print("Invalid choice. Please enter 1, 2, or 3.")
 
-def get_liked_songs():
-    rows = []
-    results = sp.current_user_saved_tracks(limit=50)
-    total = results.get("total", 0)
-    print("🎵 Fetching liked songs from Spotify...")
+# -----------------------------
+#  Fetch tracks from Tidal
+# -----------------------------
+PAGE_LIMIT = 100
 
-    with tqdm(total=total, desc="Liked songs", unit="track") as pbar:
-        while results:
-            for item in results["items"]:
-                row = map_track_to_row(item.get("track"))
+def get_favorite_tracks():
+    rows = []
+    favorites = sp.user.favorites
+    try:
+        total = favorites.get_tracks_count()
+    except Exception:
+        total = 0
+    print("🎵 Fetching favorite tracks from Tidal...")
+
+    offset = 0
+    with tqdm(total=total or None, desc="Favorite tracks", unit="track") as pbar:
+        while True:
+            batch = favorites.tracks(limit=PAGE_LIMIT, offset=offset)
+            if not batch:
+                break
+            for track in batch:
+                row = map_track_to_row(track)
                 if row:
                     rows.append(row)
-            pbar.update(len(results.get("items", [])))
-            results = sp.next(results) if results.get("next") else None
-            time.sleep(0.5)
+            pbar.update(len(batch))
+            if len(batch) < PAGE_LIMIT:
+                break
+            offset += PAGE_LIMIT
+            time.sleep(0.3)
 
-    print(f"🎉 Retrieved {len(rows)} songs!\n")
-    print_local_tracks_log(rows, "liked songs")
+    rows = dedupe_rows(rows)
+    print(f"🎉 Retrieved {len(rows)} favorite tracks!\n")
     return rows
 
 def get_user_playlists():
-    playlists = []
-    results = sp.current_user_playlists(limit=50)
-    while results:
-        playlists.extend(results.get("items", []))
-        results = sp.next(results) if results.get("next") else None
-        time.sleep(0.2)
-    return playlists
+    return sp.user.playlists()
+
+def _playlist_name(playlist):
+    return getattr(playlist, "name", None) or "Untitled"
+
+def _playlist_track_total(playlist):
+    return getattr(playlist, "num_tracks", None) or 0
 
 def choose_playlists(playlists):
     if not playlists:
@@ -232,7 +180,7 @@ def choose_playlists(playlists):
 
     print("\nAvailable playlists:")
     for idx, playlist in enumerate(playlists, start=1):
-        print(f"  [{idx}] {playlist.get('name', 'Untitled')} ({playlist.get('tracks', {}).get('total', 0)} tracks)")
+        print(f"  [{idx}] {_playlist_name(playlist)} ({_playlist_track_total(playlist)} tracks)")
 
     while True:
         raw = input("> Select one or more playlists (e.g. 1,3,5): ").strip()
@@ -252,24 +200,27 @@ def choose_one_playlist(playlists):
 def get_playlist_tracks(selected_playlists):
     rows = []
     print("🎵 Fetching tracks from selected playlist(s)...")
-    total = sum((p.get("tracks") or {}).get("total", 0) for p in selected_playlists)
-    with tqdm(total=total, desc="Playlist tracks", unit="track") as pbar:
+    total = sum(_playlist_track_total(p) for p in selected_playlists)
+    with tqdm(total=total or None, desc="Playlist tracks", unit="track") as pbar:
         for playlist in selected_playlists:
-            results = sp.playlist_items(playlist["id"], limit=100)
-            while results:
-                items = results.get("items", [])
-                for item in items:
-                    row = map_track_to_row(item.get("track"))
+            offset = 0
+            while True:
+                batch = playlist.tracks(limit=PAGE_LIMIT, offset=offset)
+                if not batch:
+                    break
+                for track in batch:
+                    row = map_track_to_row(track)
                     if not row:
                         continue
                     rows.append(row)
-                pbar.update(len(items))
-                results = sp.next(results) if results.get("next") else None
+                pbar.update(len(batch))
+                if len(batch) < PAGE_LIMIT:
+                    break
+                offset += PAGE_LIMIT
                 time.sleep(0.2)
 
     rows = dedupe_rows(rows)
     print(f"🎉 Retrieved {len(rows)} unique songs from selected playlists!\n")
-    print_local_tracks_log(rows, "selected playlists")
     return rows
 
 # -----------------------------
@@ -277,7 +228,7 @@ def get_playlist_tracks(selected_playlists):
 # -----------------------------
 album_genre_cache = {}
 
-def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
+def get_best_genre(song_name, artist_name, album_name, album_id=None):
     cache_key = (album_id or album_name, artist_name)  # album id+artist avoids same-title clashes
     if cache_key in album_genre_cache:
         return album_genre_cache[cache_key]
@@ -285,12 +236,9 @@ def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
     clean_name = clean_album_name(album_name)
     providers = [
         ("Discogs", lambda: get_discogs_album_info(clean_name, artist_name, DISCOGS_API_KEY)),
-        *((("Spotify Album", lambda: get_spotify_album_info(sp, album_id)),) if album_id else ()),
-        *((("Spotify Track Artist", lambda: get_spotify_track_artist_genres(sp, track_id)),) if track_id else ()),
         ("LastFM Album", lambda: get_lastfm_album_info(clean_name, artist_name, LASTFM_API_KEY)),
         ("MusicBrainz", lambda: get_musicbrainz_album_info(clean_name, artist_name)),
         ("LastFM Track", lambda: get_lastfm_track_info(song_name, artist_name, LASTFM_API_KEY)),
-        ("Spotify Artist", lambda: get_spotify_artist_genres(sp, artist_name)),
         ("Wikipedia", lambda: get_wikipedia_album_info(clean_name, artist_name)),
         ("iTunes", lambda: get_itunes_album_info(clean_name, artist_name)),
     ]
@@ -307,21 +255,21 @@ def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
 # -----------------------------
 source_choice = select_input_source()
 if source_choice == "1":
-    source_slug = "liked_songs"
-    source_label = "Liked songs"
-    songs_data = get_liked_songs()
+    source_slug = "favorite_tracks"
+    source_label = "Favorite tracks"
+    songs_data = get_favorite_tracks()
 elif source_choice == "2":
     source_slug = "selected_playlists"
     playlists = get_user_playlists()
     selected_playlists = choose_playlists(playlists)
-    source_label = "Playlists: " + ", ".join(p.get("name", "Untitled") for p in selected_playlists)
+    source_label = "Playlists: " + ", ".join(_playlist_name(p) for p in selected_playlists)
     songs_data = get_playlist_tracks(selected_playlists)
 else:
-    source_slug = "liked_plus_playlist"
+    source_slug = "favorites_plus_playlist"
     playlists = get_user_playlists()
     selected_playlist = choose_one_playlist(playlists)[0]
-    source_label = f"Liked songs + {selected_playlist.get('name', 'Untitled')}"
-    songs_data = dedupe_rows(get_liked_songs() + get_playlist_tracks([selected_playlist]))
+    source_label = f"Favorite tracks + {_playlist_name(selected_playlist)}"
+    songs_data = dedupe_rows(get_favorite_tracks() + get_playlist_tracks([selected_playlist]))
     print(f"🎉 Combined source contains {len(songs_data)} unique songs.\n")
 
 df = pd.DataFrame(songs_data)
@@ -338,14 +286,13 @@ for row in tqdm(df.to_dict("records"), total=len(df), desc="Genres", unit="track
         row.get("Artist"),
         row.get("Album"),
         row.get("Album ID"),
-        row.get("Spotify Track ID"),
     )
     album_genres.append(genres)
     album_genre_sources.append(source)
 df["Album Genre"] = album_genres
 df["source"] = album_genre_sources
 
-# Unique identifier - use Album ID when available, fallback for local tracks
+# Unique identifier - use Album ID when available, fallback when missing
 df["Unique Album"] = df["Album ID"].fillna(df["Album"] + " - " + df["Artist"])
 
 # -----------------------------
@@ -452,34 +399,25 @@ final_df.drop(columns=["Sorted Genres"], inplace=True)
 # -----------------------------
 # Create playlist & save CSV
 # -----------------------------
-current_user = sp.current_user()
-user_id = current_user["id"]
-
 current_date = datetime.today().strftime('%Y-%m-%d')
 playlist_name = f"liked songs sorted {current_date}"
-playlist_description = f"Playlist created by Spotify Sorter from {source_label.lower()} using album genre similarity."
+playlist_description = f"Playlist created by Tidal Sorter from {source_label.lower()} using album genre similarity."
 
-playlist = sp.user_playlist_create(user=user_id, name=playlist_name, public=False, description=playlist_description)
-playlist_id = playlist["id"]
+playlist = sp.user.create_playlist(playlist_name, playlist_description)
+playlist_id = getattr(playlist, "id", None)
 print(f"\n🎯 Created playlist: {playlist_name} (ID: {playlist_id})")
 
-track_uris = [
-    f"spotify:track:{tid}"
-    for tid in final_df["Spotify Track ID"]
+track_ids = [
+    str(tid)
+    for tid in final_df["Tidal Track ID"]
     if isinstance(tid, str) and tid
 ]
-local_count = int(final_df["Is Local"].sum()) if "Is Local" in final_df else 0
-chunks = [track_uris[pos:pos+100] for pos in range(0, len(track_uris), 100)]
+chunks = [track_ids[pos:pos+100] for pos in range(0, len(track_ids), 100)]
 for chunk in tqdm(chunks, desc=f"Uploading {playlist_name}", unit="chunk"):
-    sp.playlist_add_items(playlist_id, chunk)
+    playlist.add(chunk)
     time.sleep(0.5)
 
 csv_filename = f"{source_slug}_sorted_{current_date}.csv"
 final_df.to_csv(csv_filename, index=False)
 print(f"\n📁 Sorted songs saved to CSV: {csv_filename}")
-if local_count:
-    print(
-        f"\n⚠️ {local_count} local track(s) were kept in the CSV/sorting output "
-        "but could not be added to the playlist through the Spotify Web API."
-    )
-print(f"\n✅ Playlist '{playlist_name}' created successfully with {len(track_uris)} tracks!")
+print(f"\n✅ Playlist '{playlist_name}' created successfully with {len(track_ids)} tracks!")
