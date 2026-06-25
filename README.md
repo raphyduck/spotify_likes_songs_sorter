@@ -53,10 +53,15 @@ A small utility for **Spotify** and **Tidal** users who maintain a large collect
 
 Since Tidal has no genre data of its own, you can let **Spotify help enrich your Tidal
 tracks**. If you fill in the `[SPOTIFY]` `CLIENT_ID` / `CLIENT_SECRET` in `settings.ini`,
-a Tidal run will consult Spotify's **artist-level genres first**, before the name-based
-providers. This uses Spotify's **Client Credentials** flow — no Spotify login, profile, or
-redirect URI is required; the credentials are used only to read public genre data. Leave the
-Spotify placeholders untouched to keep this disabled.
+a Tidal run consults Spotify first, before the name-based providers:
+
+1. **Spotify Album** — the album is matched on Spotify by name + artist, and its
+   album-level genres are used (falling back to the album's artists' genres).
+2. **Spotify Artist** — the artist's genres, as a broader fallback.
+
+This uses Spotify's **Client Credentials** flow — no Spotify login, profile, or redirect URI
+is required; the credentials are used only to read public genre data. Leave the Spotify
+placeholders untouched to keep this disabled.
 
 ### Clustering and ordering
 

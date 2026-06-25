@@ -135,15 +135,42 @@ def get_lastfm_track_info(song_name, artist_name, api_key):
 
 def get_spotify_album_info(sp, album_id):
     """
-    Aggregate genres from the album’s artists on Spotify.
+    Return an album's genres on Spotify.
+
+    Prefers the album's own ``genres`` field when present, otherwise falls
+    back to aggregating the genres of the album's artists.
     """
     try:
         alb = sp.album(album_id)
+        album_genres = clean_tags(alb.get("genres", []) or [])
+        if album_genres:
+            return album_genres
         genres = []
         for art in alb.get("artists", []):
             a = sp.artist(art.get("id"))
             genres.extend(a.get("genres", []))
         return clean_tags(genres)
+    except Exception:
+        pass
+    return []
+
+def get_spotify_album_search_info(sp, album_name, artist_name):
+    """
+    Resolve a Spotify album by name + artist, then return its genres.
+
+    Useful for cross-service enrichment (e.g. Tidal) where no Spotify album
+    id is available: we search Spotify by name to obtain one, then reuse
+    :func:`get_spotify_album_info`.
+    """
+    try:
+        query = f'album:"{album_name}" artist:"{artist_name}"'
+        res = sp.search(q=query, type="album", limit=1)
+        items = res.get("albums", {}).get("items", [])
+        if not items:
+            return []
+        album_id = items[0].get("id")
+        if album_id:
+            return get_spotify_album_info(sp, album_id)
     except Exception:
         pass
     return []

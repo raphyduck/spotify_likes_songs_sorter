@@ -22,6 +22,7 @@ from genre_helpers import (
     get_lastfm_track_info,
     get_wikipedia_album_info,
     get_spotify_album_info,
+    get_spotify_album_search_info,
     get_spotify_artist_genres,
     get_spotify_track_artist_genres,
 )
@@ -432,11 +433,13 @@ class TidalBackend(Backend):
     def get_genre_providers(self, song, artist, album, clean_album,
                             album_id, track_id, config):
         # Tidal exposes no genre metadata, so genres come from name-based
-        # providers. When Spotify credentials are configured, Spotify's
-        # artist-level genres are consulted first as a cross-lookup.
+        # providers. When Spotify credentials are configured, Spotify is
+        # consulted first as a cross-lookup: album-level genres (resolved by
+        # searching Spotify for the album) take priority over artist-level.
         providers = []
         if self._spotify is not None:
             sp = self._spotify
+            providers.append(("Spotify Album", lambda: get_spotify_album_search_info(sp, album, artist)))
             providers.append(("Spotify Artist", lambda: get_spotify_artist_genres(sp, artist)))
         providers.extend([
             ("Discogs", lambda: get_discogs_album_info(clean_album, artist, self._discogs_key)),

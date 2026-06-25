@@ -23,8 +23,8 @@ class TidalProviderOrderTest(unittest.TestCase):
         )
         self.assertEqual(
             [name for name, _ in providers],
-            ["Spotify Artist", "Discogs", "LastFM Album", "MusicBrainz",
-             "LastFM Track", "Wikipedia", "iTunes"],
+            ["Spotify Album", "Spotify Artist", "Discogs", "LastFM Album",
+             "MusicBrainz", "LastFM Track", "Wikipedia", "iTunes"],
         )
 
 
