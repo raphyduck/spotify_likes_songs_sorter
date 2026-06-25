@@ -11,6 +11,11 @@ REDIRECT_URI = http://127.0.0.1:8080/
 ; client id/secret. Optionally set where the OAuth session is cached so you
 ; only authorize once. Defaults to ~/.tidal_sorter_session.json when omitted.
 ; session_file = ~/.tidal_sorter_session.json
+;
+; Tidal exposes no genre metadata. If you fill in the [SPOTIFY] CLIENT_ID /
+; CLIENT_SECRET above, the Tidal run additionally cross-looks up Spotify's
+; artist-level genres FIRST (via the Client Credentials flow — no Spotify
+; login needed). Leave the Spotify placeholders untouched to disable this.
 
 [LASTFM]
 API_KEY = api_key

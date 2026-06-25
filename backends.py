@@ -284,6 +284,7 @@ class TidalBackend(Backend):
         self.session = None
         self._discogs_key = None
         self._lastfm_key = None
+        self._spotify = None  # optional Spotify client-credentials client for genre cross-lookup
 
     # --- auth -----------------------------------------------------------------
     def authenticate(self, config):
@@ -308,6 +309,40 @@ class TidalBackend(Backend):
             sys.exit(1)
         self.session = session
         print("✅ Authentication successful!\n")
+
+        self._spotify = self._maybe_build_spotify_client(config)
+
+    @staticmethod
+    def _maybe_build_spotify_client(config):
+        """Build a Spotify *client-credentials* client for genre cross-lookup.
+
+        Tidal exposes no genre metadata, but Spotify has solid artist-level
+        genres searchable by name. When Spotify credentials are present in
+        settings.ini we use the Client Credentials flow (no user login / no
+        redirect URI) purely to enrich Tidal tracks. Returns ``None`` when the
+        credentials are absent or still set to the sample placeholders.
+        """
+        client_id = config.get("SPOTIFY", "CLIENT_ID", fallback=None)
+        client_secret = config.get("SPOTIFY", "CLIENT_SECRET", fallback=None)
+        placeholders = {None, "", "clientid", "clientsecret"}
+        if client_id in placeholders or client_secret in placeholders:
+            return None
+        try:
+            import spotipy
+            from spotipy.oauth2 import SpotifyClientCredentials
+            client = spotipy.Spotify(
+                client_credentials_manager=SpotifyClientCredentials(
+                    client_id=client_id, client_secret=client_secret
+                )
+            )
+            # Probe credentials early so a misconfiguration fails loudly here
+            # rather than silently swallowing every lookup later.
+            client.search(q="artist:Radiohead", type="artist", limit=1)
+            print("🔗 Spotify genre cross-lookup enabled (artist-level genres).\n")
+            return client
+        except Exception as exc:
+            print(f"⚠️ Spotify genre cross-lookup unavailable ({exc}); continuing without it.\n")
+            return None
 
     # --- mapping --------------------------------------------------------------
     @staticmethod
@@ -396,15 +431,22 @@ class TidalBackend(Backend):
     # --- genres ---------------------------------------------------------------
     def get_genre_providers(self, song, artist, album, clean_album,
                             album_id, track_id, config):
-        # Tidal exposes no genre metadata, so only name-based providers apply.
-        return [
+        # Tidal exposes no genre metadata, so genres come from name-based
+        # providers. When Spotify credentials are configured, Spotify's
+        # artist-level genres are consulted first as a cross-lookup.
+        providers = []
+        if self._spotify is not None:
+            sp = self._spotify
+            providers.append(("Spotify Artist", lambda: get_spotify_artist_genres(sp, artist)))
+        providers.extend([
             ("Discogs", lambda: get_discogs_album_info(clean_album, artist, self._discogs_key)),
             ("LastFM Album", lambda: get_lastfm_album_info(clean_album, artist, self._lastfm_key)),
             ("MusicBrainz", lambda: get_musicbrainz_album_info(clean_album, artist)),
             ("LastFM Track", lambda: get_lastfm_track_info(song, artist, self._lastfm_key)),
             ("Wikipedia", lambda: get_wikipedia_album_info(clean_album, artist)),
             ("iTunes", lambda: get_itunes_album_info(clean_album, artist)),
-        ]
+        ])
+        return providers
 
     # --- output ---------------------------------------------------------------
     def create_playlist(self, name, description):
