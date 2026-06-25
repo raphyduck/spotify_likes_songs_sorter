@@ -10,4 +10,4 @@ if [ ! -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
 fi
 
 source "$SCRIPT_DIR/.venv/bin/activate"
-python ./tidal_sorter.py
+python ./sorter.py "$@"
