@@ -1,27 +1,27 @@
-# Spotify Liked Songs Sorter
+# Liked Songs Sorter (Spotify & Tidal)
 
-A small utility for Spotify users who maintain a large collection of liked songs and want to keep them organized. The sorter enriches each liked track with album- and artist-level genre metadata so that it can group and order your collection by actual listening styles.
+A small utility for **Spotify** and **Tidal** users who maintain a large collection of liked/favorite songs and want to keep them organized. At launch you pick which streaming service to act on; the sorter then enriches each track with album- and artist-level genre metadata so that it can group and order your collection by actual listening styles.
 
 ## Features
 
-- Fetches input tracks from either your liked songs or one/multiple playlists.
-- Keeps local tracks in the sorting/CSV output when Spotify returns them.
-- Aggregates genre information for every album from Discogs, Last.fm, MusicBrainz, Spotify, Wikipedia, iTunes Search, and more.
+- **Pick your service at launch:** Spotify or Tidal — the same sorting workflow runs on either.
+- Fetches input tracks from either your liked/favorite songs or one/multiple playlists.
+- Aggregates genre information for every album from Discogs, Last.fm, MusicBrainz, Spotify (Spotify only), Wikipedia, and the iTunes Search API.
 - Clusters albums by genre similarity and produces a smoothly ordered playlist plus a CSV export of the final ordering.
-- Provides helper scripts for inspecting the resolved genres and fine-tuning your configuration.
+- Provides a helper script for inspecting the resolved genres and fine-tuning your configuration.
 
 ## Prerequisites
 
 - Python 3.10 or newer.
-- A Spotify Developer account with an application configured for Web API access.
-- Spotify OAuth credentials (Client ID and Client Secret) and a redirect URI.
+- For **Spotify**: a Spotify Developer application (Client ID / Client Secret) configured for Web API access.
+- For **Tidal**: an active Tidal subscription (no developer credentials required — see below).
 
 ## Installation
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-username/spotify_likes_songs_sorter.git
-   cd spotify_likes_songs_sorter
+   git clone https://github.com/your-username/likes_songs_sorter.git
+   cd likes_songs_sorter
    ```
 2. Create and activate a virtual environment:
    ```bash
@@ -39,13 +39,19 @@ A small utility for Spotify users who maintain a large collection of liked songs
    ```bash
    cp settings.ini.sample settings.ini
    ```
-2. Edit `settings.ini` and provide your Spotify Client ID, Client Secret, and redirect URI. Register **exactly** `http://127.0.0.1:8080/` as a Redirect URI in your Spotify Developer Dashboard and mirror the same value in `settings.ini` to match the console authorization flow.
-   The app requests scopes for liked songs, private profile, reading private playlists, and creating private playlists.
-3. Optional: the iTunes Search fallback does not need credentials and will be used automatically when earlier providers cannot supply genres.
+2. You only need to configure the service(s) you intend to use:
+   - **Spotify** — provide your Client ID, Client Secret, and redirect URI. Register **exactly** `http://127.0.0.1:8080/` as a Redirect URI in your Spotify Developer Dashboard and mirror the same value in `settings.ini` to match the console authorization flow. The app requests scopes for liked songs, private profile, reading private playlists, and creating private playlists.
+   - **Tidal** — no client id/secret needed. Authentication uses the built-in **device OAuth flow**: on first run the script prints a `link.tidal.com` URL — open it, log in, and authorize. The session is then cached (by default at `~/.tidal_sorter_session.json`) and reused/refreshed automatically. Override the cache path via `session_file` in the `[TIDAL]` section if desired.
+3. Provide your Discogs and Last.fm API keys (used for genre lookups by both services).
+4. Optional: the iTunes Search fallback does not need credentials and is used automatically when earlier providers cannot supply genres.
+
+> Note: Tidal does not expose album/artist genre metadata through its API, so for Tidal
+> genres are resolved exclusively from the name-based providers (Discogs, Last.fm,
+> MusicBrainz, Wikipedia, iTunes). Spotify additionally uses Spotify's own genre data.
 
 ### Clustering and ordering
 
-The sorter now picks segmentation settings from the data: it tries several minimum-spanning-tree cuts and keeps the one with the best silhouette score, falling back to trimming the heaviest genre-distance edges. The greedy chaining step also adapts to the observed similarity distribution so resets happen only when similarities drop meaningfully.
+The sorter picks segmentation settings from the data: it tries several minimum-spanning-tree cuts and keeps the one with the best silhouette score, falling back to trimming the heaviest genre-distance edges. The greedy chaining step also adapts to the observed similarity distribution so resets happen only when similarities drop meaningfully.
 
 You can tune how tight the grouping is without touching the code via `settings.ini`:
 
@@ -62,36 +68,47 @@ Lower `segmentation_strength` values keep broader groups (fewer cuts), while hig
 ## Usage
 
 1. Ensure your virtual environment is active and your configuration file is set up.
-2. Run the sorter script:
+2. Run the sorter:
    ```bash
-   python spotify_sorter.py
+   python sorter.py
    ```
-3. Follow the console prompts to authenticate with Spotify, then choose your source:
-   - `[1] Liked songs`
-   - `[2] Playlist(s)` (multi-select with comma-separated numbers, e.g. `1,3,5`)
-   - `[3] Liked songs + one playlist`
-4. The script then fetches tracks, sorts them by genre similarity, creates a private playlist named `liked songs sorted YYYY-MM-DD`, and exports a CSV.
+   You can also skip the service prompt with `--service spotify` or `--service tidal`.
+3. Follow the console prompts:
+   - First choose the streaming service: `[1] Spotify` / `[2] Tidal`.
+   - Authenticate (Spotify console paste flow, or Tidal device link — first run only).
+   - Then choose your source:
+     - `[1] Liked songs` (Spotify) / `Favorite tracks` (Tidal)
+     - `[2] Playlist(s)` (multi-select with comma-separated numbers, e.g. `1,3,5`)
+     - `[3] Liked/Favorite songs + one playlist`
+4. The script then fetches tracks, sorts them by genre similarity, creates a playlist named `liked songs sorted YYYY-MM-DD`, and exports a CSV (`<service>_<source>_sorted_YYYY-MM-DD.csv`).
 
-> Note: Spotify local files cannot be inserted into playlists through the Web API.  
-> The sorter still includes local tracks in sorting + CSV, logs them in the console, then uploads only tracks with valid Spotify IDs.
+> Note: Spotify local files cannot be inserted into playlists through the Web API.
+> The sorter still includes local tracks in sorting + CSV, logs them in the console, then
+> uploads only tracks with valid Spotify IDs. Tidal has no local-file concept.
 
 ### Debugging Genres
 
-If you want to inspect genre data for specific artists or tracks, use the helper script. It accepts optional Spotify IDs so it can follow the same provider order/conditions as the main sorter (`if album_id`, `if track_id`):
+If you want to inspect genre data for specific artists or tracks, use the helper script. It runs the shared, name-based genre providers (the ones common to both services):
 
 ```bash
 python debug_genres.py \
   --artist "Radiohead" \
   --album "In Rainbows" \
-  --song "Weird Fishes/Arpeggi" \
-  --album-id "5vkqYmiPBYLaalcmjujWxK" \
-  --track-id "4wajJ1o7jWIg62YqpkHC7S"
+  --song "Weird Fishes/Arpeggi"
 ```
 
-Replace the sample values with the artist/album/track you want to inspect (IDs are available from the Spotify desktop or web client). The output prints attempt order so you can quickly diagnose which providers were called and what each returned.
+Replace the sample values with the artist/album/track you want to inspect. The output prints the attempt order so you can quickly diagnose which providers were called and what each returned.
+
+## Project layout
+
+- `sorter.py` — entry point; chooses the service and runs the pipeline.
+- `backends.py` — `SpotifyBackend` and `TidalBackend` (auth, fetching, per-service genre providers, playlist creation).
+- `sorter_core.py` — service-agnostic pipeline (genre enrichment, clustering, ordering, CSV export).
+- `genre_helpers.py` — individual genre-provider implementations.
 
 ## Development
 
+- Run the test suite with `python -m unittest discover -s tests`.
 - Formatting and linting are handled by standard Python tooling; feel free to use `black` or `ruff` as desired.
 - Contributions are welcome! Please open an issue or submit a pull request with improvements or bug fixes.
 

@@ -99,7 +99,7 @@ def get_musicbrainz_album_info(album_name, artist_name, max_results=5):
             "limit": max_results
         }
         r = requests.get(url, params=params, timeout=5,
-                         headers={"User-Agent": "SpotifySorter/1.0"})
+                         headers={"User-Agent": "MusicSorter/1.0"})
         groups = r.json().get("release-groups", [])
         for grp in groups:
             title = grp.get("title", "").lower()
@@ -148,6 +148,34 @@ def get_spotify_album_info(sp, album_id):
         pass
     return []
 
+def get_spotify_artist_genres(sp, artist_name):
+    """
+    Fetch genres directly from the artist record on Spotify.
+    """
+    try:
+        res = sp.search(q=f"artist:{artist_name}", type="artist", limit=1)
+        items = res.get("artists", {}).get("items", [])
+        if items:
+            return clean_tags(items[0].get("genres", []))
+    except Exception:
+        pass
+    return []
+
+def get_spotify_track_artist_genres(sp, track_id):
+    """
+    Fetch genres from the artists attached to a specific track.
+    """
+    try:
+        track = sp.track(track_id)
+        genres = []
+        for artist in track.get("artists", []):
+            art = sp.artist(artist.get("id"))
+            genres.extend(art.get("genres", []))
+        return clean_tags(genres)
+    except Exception:
+        pass
+    return []
+
 def get_wikipedia_album_info(album_name, artist_name):
     """
     Scrape album infobox on Wikipedia for the Genre field.
@@ -158,7 +186,7 @@ def get_wikipedia_album_info(album_name, artist_name):
         resp = requests.get(
             url,
             timeout=4,
-            headers={"User-Agent": "SpotifySorter/1.0 (+github.com/spotify-likes-songs-sorter)"}
+            headers={"User-Agent": "MusicSorter/1.0 (+github.com/likes-songs-sorter)"}
         )
         if resp.status_code >= 400:
             return []
@@ -203,51 +231,20 @@ def get_itunes_album_info(album_name, artist_name):
         pass
     return []
 
-def get_spotify_artist_genres(sp, artist_name):
-    """
-    Fetch genres directly from the artist record on Spotify.
-    """
-    try:
-        res = sp.search(q=f"artist:{artist_name}", type="artist", limit=1)
-        items = res.get("artists", {}).get("items", [])
-        if items:
-            return clean_tags(items[0].get("genres", []))
-    except Exception:
-        pass
-    return []
-
-
-def get_spotify_track_artist_genres(sp, track_id):
-    """
-    Fetch genres from the artists attached to a specific track.
-    """
-    try:
-        track = sp.track(track_id)
-        genres = []
-        for artist in track.get("artists", []):
-            art = sp.artist(artist.get("id"))
-            genres.extend(art.get("genres", []))
-        return clean_tags(genres)
-    except Exception:
-        pass
-    return []
-
-def lookup_genres(artist, album, song, album_id, cfg, track_id=None):
+def lookup_genres(artist, album, song, cfg):
     """
     Run each service in turn and return an OrderedDict of their results.
+
+    Genres come exclusively from name-based providers (Discogs, Last.fm,
+    MusicBrainz, Wikipedia, iTunes) so the lookup stays independent of any
+    particular streaming service. Tidal does not expose album/artist genre
+    metadata through its API, so the enrichment relies on these sources.
     """
-    sp = spotipy.Spotify(client_credentials_manager=SpotifyClientCredentials(
-        client_id=cfg["SPOTIFY"]["CLIENT_ID"],
-        client_secret=cfg["SPOTIFY"]["CLIENT_SECRET"]
-    ))
     providers = [
         ("Discogs", lambda: get_discogs_album_info(album, artist, cfg["DISCOGS"]["API_KEY"])),
-        *((("Spotify Album", lambda: get_spotify_album_info(sp, album_id)),) if album_id else ()),
-        *((("Spotify Track Artist", lambda: get_spotify_track_artist_genres(sp, track_id)),) if track_id else ()),
         ("LastFM Album", lambda: get_lastfm_album_info(album, artist, cfg["LASTFM"]["API_KEY"])),
         ("MusicBrainz", lambda: get_musicbrainz_album_info(album, artist)),
         ("LastFM Track", lambda: get_lastfm_track_info(song, artist, cfg["LASTFM"]["API_KEY"])),
-        ("Spotify Artist", lambda: get_spotify_artist_genres(sp, artist)),
         ("Wikipedia", lambda: get_wikipedia_album_info(album, artist)),
         ("iTunes", lambda: get_itunes_album_info(album, artist)),
     ]

@@ -1,7 +1,16 @@
+; Configure only the service(s) you intend to use. At launch you pick Spotify
+; or Tidal; the genre providers and clustering settings below are shared.
+
 [SPOTIFY]
 CLIENT_ID = clientid
 CLIENT_SECRET = clientsecret
 REDIRECT_URI = http://127.0.0.1:8080/
+
+[TIDAL]
+; Tidal authentication uses the built-in device OAuth flow and needs no
+; client id/secret. Optionally set where the OAuth session is cached so you
+; only authorize once. Defaults to ~/.tidal_sorter_session.json when omitted.
+; session_file = ~/.tidal_sorter_session.json
 
 [LASTFM]
 API_KEY = api_key
@@ -9,12 +18,8 @@ API_KEY = api_key
 [DISCOGS]
 API_KEY = api_key
 
-[GOOGLE_CSE]
-API_KEY = apikey
-CSE_ID  = cseid
-
 [CLUSTERING]
 segmentation_strength = 0.6
 max_clusters = 10
 
-; iTunes Search fallback requires no API key and needs no configuration.
+; The iTunes Search fallback requires no API key and needs no configuration.
