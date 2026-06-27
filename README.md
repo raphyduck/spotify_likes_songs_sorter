@@ -46,8 +46,22 @@ A small utility for **Spotify** and **Tidal** users who maintain a large collect
 4. Optional: the iTunes Search fallback does not need credentials and is used automatically when earlier providers cannot supply genres.
 
 > Note: Tidal does not expose album/artist genre metadata through its API, so for Tidal
-> genres are resolved exclusively from the name-based providers (Discogs, Last.fm,
-> MusicBrainz, Wikipedia, iTunes). Spotify additionally uses Spotify's own genre data.
+> genres are resolved from the name-based providers (Discogs, Last.fm, MusicBrainz,
+> Wikipedia, iTunes). Spotify additionally uses Spotify's own genre data.
+
+#### Spotify genre cross-lookup for Tidal (optional)
+
+Since Tidal has no genre data of its own, you can let **Spotify help enrich your Tidal
+tracks**. If you fill in the `[SPOTIFY]` `CLIENT_ID` / `CLIENT_SECRET` in `settings.ini`,
+a Tidal run consults Spotify first, before the name-based providers:
+
+1. **Spotify Album** — the album is matched on Spotify by name + artist, and its
+   album-level genres are used (falling back to the album's artists' genres).
+2. **Spotify Artist** — the artist's genres, as a broader fallback.
+
+This uses Spotify's **Client Credentials** flow — no Spotify login, profile, or redirect URI
+is required; the credentials are used only to read public genre data. Leave the Spotify
+placeholders untouched to keep this disabled.
 
 ### Clustering and ordering
 
