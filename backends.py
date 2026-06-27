@@ -456,16 +456,33 @@ class TidalBackend(Backend):
         return self.session.user.create_playlist(name, description)
 
     def add_tracks(self, playlist, ordered_rows):
+        import requests
+        from tidalapi.playlist import UserPlaylist
         track_ids = [
             str(row.get(self.track_id_col))
             for row in ordered_rows
             if isinstance(row.get(self.track_id_col), str) and row.get(self.track_id_col)
         ]
         chunks = [track_ids[i:i + 100] for i in range(0, len(track_ids), 100)]
+        playlist_id = playlist.id
+        added = 0
         for chunk in tqdm(chunks, desc="Uploading playlist", unit="chunk"):
-            playlist.add(chunk)
-            time.sleep(0.5)
-        return len(track_ids), 0
+            # Tidal occasionally returns HTTP 412 (stale ETag) when adding
+            # items in a loop. Refresh the playlist (new ETag) and retry.
+            for attempt in range(6):
+                try:
+                    playlist.add(chunk)
+                    added += len(chunk)
+                    break
+                except requests.exceptions.HTTPError as exc:
+                    status = getattr(exc.response, "status_code", None)
+                    if status == 412 and attempt < 5:
+                        time.sleep(1.0 + attempt)
+                        playlist = UserPlaylist(self.session, playlist_id)
+                        continue
+                    raise
+            time.sleep(0.6)
+        return added, 0
 
 
 BACKENDS = {
