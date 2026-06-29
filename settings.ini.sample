@@ -28,4 +28,18 @@ API_KEY = api_key
 segmentation_strength = 0.6
 max_clusters = 10
 
+[CACHE]
+; Persistent genre cache so repeat runs don't re-fetch genres (15-20 min -> seconds).
+; backend: redis | file | none
+backend = redis
+redis_url = redis://localhost:6379/0
+; ttl_days applies to found genres; negative (not-found) results use a short TTL
+; so they get retried. Override the file location with file_path if desired.
+ttl_days = 90
+negative_ttl_hours = 6
+; file_path = ~/.cache/likes_songs_sorter/genre_cache.json
+;
+; If Redis is unreachable the run automatically falls back to the file cache.
+; CLI overrides: --refresh-cache (re-fetch & overwrite), --no-cache (disable).
+
 ; The iTunes Search fallback requires no API key and needs no configuration.

@@ -20,6 +20,7 @@ from scipy.sparse.csgraph import minimum_spanning_tree
 from tqdm import tqdm
 
 from genre_helpers import clean_album_name, normalize_and_sort_genres
+from genre_cache import build_cache_from_config, make_key
 
 
 # -----------------------------
@@ -125,13 +126,12 @@ def _collect_source(backend):
 # -----------------------------
 #  Genre enrichment
 # -----------------------------
-def _make_genre_resolver(backend, config):
-    cache = {}
-
+def _make_genre_resolver(backend, config, cache):
     def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
-        cache_key = (album_id or album_name, artist_name)
-        if cache_key in cache:
-            return cache[cache_key]
+        cache_key = make_key(album_id, album_name, artist_name)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
         clean_name = clean_album_name(album_name or "")
         providers = backend.get_genre_providers(
             song_name, artist_name, album_name, clean_name, album_id, track_id, config
@@ -139,9 +139,10 @@ def _make_genre_resolver(backend, config):
         for source, lookup in providers:
             genres = lookup()
             if genres:
-                result = (genres, source)
-                cache[cache_key] = result
-                return result
+                cache.set(cache_key, genres, source)
+                return genres, source
+        # Cache the negative result too (short TTL) so it is retried before long.
+        cache.set(cache_key, [], "None")
         return [], "None"
 
     return get_best_genre
@@ -254,7 +255,7 @@ def _order_albums(df, segmentation_strength, max_clusters):
 # -----------------------------
 #  Top-level entry point
 # -----------------------------
-def run(backend, config):
+def run(backend, config, refresh_cache=False, no_cache=False):
     """Run the full pipeline for an authenticated backend."""
     source_slug, source_label, songs_data = _collect_source(backend)
 
@@ -263,19 +264,26 @@ def run(backend, config):
         print("No tracks found for the selected source. Nothing to sort.")
         sys.exit(0)
 
+    cache = build_cache_from_config(config, refresh=refresh_cache, disabled=no_cache)
+    if cache.enabled:
+        mode = " (refresh)" if refresh_cache else ""
+        print(f"🗃️  Genre cache: {cache.backend}{mode}")
     print("🔎 Fetching genres for songs (with shared helpers)...")
-    get_best_genre = _make_genre_resolver(backend, config)
+    get_best_genre = _make_genre_resolver(backend, config, cache)
     album_genres, album_genre_sources = [], []
-    for row in tqdm(df.to_dict("records"), total=len(df), desc="Genres", unit="track"):
-        genres, source = get_best_genre(
-            row.get("Song"),
-            row.get("Artist"),
-            row.get("Album"),
-            row.get("Album ID"),
-            row.get(backend.track_id_col),
-        )
-        album_genres.append(genres)
-        album_genre_sources.append(source)
+    try:
+        for row in tqdm(df.to_dict("records"), total=len(df), desc="Genres", unit="track"):
+            genres, source = get_best_genre(
+                row.get("Song"),
+                row.get("Artist"),
+                row.get("Album"),
+                row.get("Album ID"),
+                row.get(backend.track_id_col),
+            )
+            album_genres.append(genres)
+            album_genre_sources.append(source)
+    finally:
+        cache.close()
     df["Album Genre"] = album_genres
     df["source"] = album_genre_sources
 

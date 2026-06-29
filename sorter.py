@@ -44,6 +44,16 @@ def main():
         help="Streaming service to use (skips the interactive prompt).",
     )
     parser.add_argument("--config", default="settings.ini", help="Path to settings.ini")
+    parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Ignore cached genres, re-fetch from providers, and overwrite the cache.",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable the persistent genre cache entirely for this run.",
+    )
     args = parser.parse_args()
 
     config = configparser.ConfigParser()
@@ -56,7 +66,7 @@ def main():
 
     # Import here so the heavy data-science stack only loads once a service is chosen.
     import sorter_core
-    sorter_core.run(backend, config)
+    sorter_core.run(backend, config, refresh_cache=args.refresh_cache, no_cache=args.no_cache)
 
 
 if __name__ == "__main__":
