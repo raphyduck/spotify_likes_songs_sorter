@@ -29,6 +29,7 @@ from genre_normalization import (
     avg_adjacent_overlap,
     count_fragmented_roots,
 )
+from genre_overrides import load_overrides, lookup_override
 
 
 # -----------------------------
@@ -134,8 +135,12 @@ def _collect_source(backend):
 # -----------------------------
 #  Genre enrichment
 # -----------------------------
-def _make_genre_resolver(backend, config, cache):
+def _make_genre_resolver(backend, config, cache, overrides=None):
     def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
+        # Manual overrides win over everything (providers and cache).
+        override = lookup_override(overrides, artist_name, album_name)
+        if override and override.get("tags"):
+            return override["tags"], "Override"
         cache_key = make_key(album_id, album_name, artist_name)
         cached = cache.get(cache_key)
         if cached is not None:
@@ -263,15 +268,28 @@ def _ordering_metric(order, tag_sets_by_name, root_by_name):
     }
 
 
-def _order_albums(df, segmentation_strength, max_clusters, root_weight, rules):
+def _album_root(genre_list, artist, album, rules, overrides):
+    override = lookup_override(overrides, artist, album)
+    if override and override.get("root"):
+        return override["root"]
+    return infer_root(genre_list, rules)
+
+
+def _order_albums(df, segmentation_strength, max_clusters, root_weight, rules,
+                  overrides=None):
     unique_albums_df = df.drop_duplicates(subset=["Unique Album"]).copy()
     raw_lists = [g if isinstance(g, list) else [] for g in unique_albums_df["Album Genre"]]
     genre_sorted = normalize_and_sort_genres(raw_lists)
     unique_albums_df["Sorted Genres"] = [", ".join(sub) for sub in genre_sorted]
 
     names = list(unique_albums_df["Unique Album"])
+    artists = list(unique_albums_df["Artist"])
+    albums = list(unique_albums_df["Album"])
     tag_sets = [{t.strip().lower() for t in sub if t.strip()} for sub in genre_sorted]
-    roots = [infer_root(sub, rules) for sub in genre_sorted]
+    roots = [
+        _album_root(genre_sorted[i], artists[i], albums[i], rules, overrides)
+        for i in range(len(genre_sorted))
+    ]
     unique_albums_df["Root Genre"] = [display_root(r) for r in roots]
     tag_sets_by_name = dict(zip(names, tag_sets))
     root_by_name = dict(zip(names, roots))
@@ -309,12 +327,17 @@ def run(backend, config, refresh_cache=False, no_cache=False):
         print("No tracks found for the selected source. Nothing to sort.")
         sys.exit(0)
 
+    overrides_file = config.get("GENRE", "overrides_file", fallback=None) or None
+    overrides = load_overrides(overrides_file)
+    if overrides:
+        print(f"🛠️  Loaded {len(overrides)} manual genre override(s).")
+
     cache = build_cache_from_config(config, refresh=refresh_cache, disabled=no_cache)
     if cache.enabled:
         mode = " (refresh)" if refresh_cache else ""
         print(f"🗃️  Genre cache: {cache.backend}{mode}")
     print("🔎 Fetching genres for songs (with shared helpers)...")
-    get_best_genre = _make_genre_resolver(backend, config, cache)
+    get_best_genre = _make_genre_resolver(backend, config, cache, overrides)
     album_genres, album_genre_sources = [], []
     try:
         for row in tqdm(df.to_dict("records"), total=len(df), desc="Genres", unit="track"):
@@ -351,7 +374,7 @@ def run(backend, config, refresh_cache=False, no_cache=False):
     roots_file = config.get("CLUSTERING", "genre_roots_file", fallback=None) or None
     rules = load_genre_roots(roots_file)
     ordering, metrics = _order_albums(
-        df, segmentation_strength, max_clusters, root_weight, rules
+        df, segmentation_strength, max_clusters, root_weight, rules, overrides
     )
 
     legacy, roots = metrics["legacy"], metrics["roots"]

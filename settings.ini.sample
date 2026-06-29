@@ -34,6 +34,14 @@ genre_root_weight = 2.0
 ; Optional path to a custom root-family mapping (defaults to genre_roots.json).
 ; genre_roots_file = genre_roots.json
 
+[GENRE]
+; Manual genre overrides (absolute priority over providers and root inference).
+; Defaults to genre_overrides.json; edit that file to pin tags/root per artist.
+; overrides_file = genre_overrides.json
+; Resolution strategy: first_match (default, fast) or consensus (merge several
+; providers by weighted vote — more accurate, more HTTP calls; results cached).
+; resolution = first_match
+
 [CACHE]
 ; Persistent genre cache so repeat runs don't re-fetch genres (15-20 min -> seconds).
 ; backend: redis | file | none

@@ -1,0 +1,9 @@
+{
+  "_comment": "Manual genre overrides with absolute priority over providers and root inference. 'match' is 'Artist' or 'Artist|Album' (case/accent-insensitive). 'tags' replaces the resolved genres; 'root' forces the root family used for the macro ordering. Add your own corrections here. The entries below fix commonly mis-classified artists; edit/remove freely.",
+  "overrides": [
+    {"match": "Sigur Rós",  "tags": ["Post-Rock", "Ambient"],            "root": "rock"},
+    {"match": "Juanes",     "tags": ["Latin Pop", "Latin Rock"],         "root": "latin"},
+    {"match": "Mecano",     "tags": ["Synth-Pop", "Latin Pop"],          "root": "pop"},
+    {"match": "Vera Lynn",  "tags": ["Traditional Pop", "Vocal"],        "root": "pop"}
+  ]
+}
