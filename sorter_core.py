@@ -332,8 +332,18 @@ def run(backend, config, refresh_cache=False, no_cache=False):
     df["Album Genre"] = album_genres
     df["source"] = album_genre_sources
 
-    # Unique identifier - use Album ID when available, fallback otherwise
-    df["Unique Album"] = df["Album ID"].fillna(df["Album"] + " - " + df["Artist"])
+    # Unique identifier - group by normalized album name + primary artist so
+    # that multiple Tidal editions/IDs of the same album are treated as one
+    # album. Keep the raw Album ID for various-artist releases (compilations /
+    # soundtracks) so they are not split apart by their per-track artists.
+    _clean_name = df["Album"].fillna("").map(clean_album_name).str.casefold().str.strip()
+    _artist_key = df["Artist"].fillna("").str.casefold().str.strip()
+    _name_key = _clean_name + " \u2014 " + _artist_key
+    _artists_per_album = df.groupby("Album ID")["Artist"].transform("nunique")
+    df["Unique Album"] = _name_key.where(
+        df["Album ID"].isna() | (_artists_per_album <= 1),
+        df["Album ID"].astype("string"),
+    )
 
     segmentation_strength = float(config.get("CLUSTERING", "segmentation_strength", fallback="0.6"))
     max_clusters = int(config.get("CLUSTERING", "max_clusters", fallback="10"))
