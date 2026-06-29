@@ -6,6 +6,7 @@ from genre_normalization import (
     load_genre_roots,
     root_of,
     primary_root,
+    infer_root,
     display_root,
     genre_similarity_matrix,
     avg_adjacent_overlap,
@@ -38,6 +39,27 @@ class RootMappingTest(unittest.TestCase):
 
     def test_display_root(self):
         self.assertEqual(display_root("chanson_fr"), "Chanson Fr")
+
+
+class InferRootTest(unittest.TestCase):
+    def setUp(self):
+        self.rules = load_genre_roots()
+
+    def test_strong_signal_anywhere_wins(self):
+        # post-rock anywhere in the set should win over a generic "ambient" tag.
+        self.assertEqual(infer_root(["Ambient", "Post-Rock"], self.rules), "rock")
+
+    def test_latin_family(self):
+        self.assertEqual(infer_root(["Pop", "Latin Pop", "Salsa"], self.rules), "latin")
+
+    def test_priority_metal_over_rock(self):
+        self.assertEqual(infer_root(["Rock", "Heavy Metal"], self.rules), "metal")
+
+    def test_fallback_to_most_specific_tag_not_unknown(self):
+        self.assertEqual(infer_root(["Zeuhl", "Avant-Garde Zeuhl"], []), "avant-garde zeuhl")
+
+    def test_empty_is_unknown(self):
+        self.assertEqual(infer_root([], self.rules), "unknown")
 
 
 class SimilarityTest(unittest.TestCase):

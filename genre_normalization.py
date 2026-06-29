@@ -64,6 +64,25 @@ def primary_root(genre_list, rules):
     return "unknown"
 
 
+def infer_root(genre_list, rules):
+    """Infer an album's root family from its *whole* tag set.
+
+    Scans rules in priority order (file order) and returns the root of the first
+    rule whose keyword matches ANY tag — so a strong signal anywhere in the list
+    (e.g. ``post-rock`` among ``ambient, post-rock``) wins over tag position.
+    Unmatched tag sets fall back to the most specific tag (the last one, since
+    tags are sorted broad->niche), never a bare ``"unknown"``.
+    """
+    norm_tags = [_norm(t) for t in (genre_list or []) if _norm(t)]
+    if not norm_tags:
+        return "unknown"
+    for rule in rules:
+        for tag in norm_tags:
+            if any(kw in tag for kw in rule["keywords"]):
+                return rule["root"]
+    return norm_tags[-1]
+
+
 def display_root(root):
     return root.replace("_", " ").title()
 

@@ -23,7 +23,7 @@ from genre_helpers import clean_album_name, normalize_and_sort_genres
 from genre_cache import build_cache_from_config, make_key
 from genre_normalization import (
     load_genre_roots,
-    primary_root,
+    infer_root,
     display_root,
     genre_similarity_matrix,
     avg_adjacent_overlap,
@@ -271,7 +271,7 @@ def _order_albums(df, segmentation_strength, max_clusters, root_weight, rules):
 
     names = list(unique_albums_df["Unique Album"])
     tag_sets = [{t.strip().lower() for t in sub if t.strip()} for sub in genre_sorted]
-    roots = [primary_root(sub, rules) for sub in genre_sorted]
+    roots = [infer_root(sub, rules) for sub in genre_sorted]
     unique_albums_df["Root Genre"] = [display_root(r) for r in roots]
     tag_sets_by_name = dict(zip(names, tag_sets))
     root_by_name = dict(zip(names, roots))
