@@ -1,19 +1,25 @@
 {
-  "_comment": "Data-driven genre root families. Each rule maps a genre tag to a root family when any keyword is a substring of the lowercased tag. Rules are evaluated top to bottom; the first match wins. Tags matching no rule fall back to their first word. Extend freely.",
+  "_comment": "Data-driven genre root families. infer_root() scans an album's whole tag set and returns the root of the FIRST rule (top to bottom = priority) whose keyword is a substring of any tag. Tags matching no rule fall back to the album's most specific tag (never 'Unknown'). Extend freely.",
   "rules": [
+    {"root": "metal",       "keywords": ["metal", "metalcore", "djent", "grindcore", "doom", "thrash", "black metal", "death metal"]},
     {"root": "punk",        "keywords": ["punk", "emo", "hardcore", "screamo"]},
-    {"root": "metal",       "keywords": ["metal", "metalcore", "djent", "grindcore", "doom", "thrash"]},
+    {"root": "rock",        "keywords": ["post-rock", "post rock", "math rock", "krautrock"]},
+    {"root": "soundtrack",  "keywords": ["soundtrack", "score", "original motion picture", "film music", "video game music"]},
+    {"root": "musical",     "keywords": ["musical", "broadway", "show tune", "cast recording"]},
+    {"root": "gospel",      "keywords": ["gospel", "worship", "ccm", "christian", "spiritual"]},
+    {"root": "latin",       "keywords": ["latin", "salsa", "cumbia", "reggaeton", "reggaetón", "bachata", "merengue", "tango", "flamenco", "ranchera", "mariachi", "español", "espanol", "tropical"]},
+    {"root": "schlager",    "keywords": ["schlager", "volksmusik"]},
+    {"root": "chanson_fr",  "keywords": ["chanson", "variété", "variete", "french pop", "française", "francais", "nouvelle chanson"]},
     {"root": "hip hop",     "keywords": ["hip hop", "hip-hop", "rap", "trap", "drill", "grime"]},
-    {"root": "electronic",  "keywords": ["electronic", "electro", "house", "techno", "trance", "edm", "dubstep", "drum and bass", "dnb", "synth", "idm", "ambient", "downtempo", "garage"]},
-    {"root": "jazz",        "keywords": ["jazz", "bebop", "swing", "bossa"]},
-    {"root": "classical",   "keywords": ["classical", "baroque", "orchestral", "opera", "symphony", "contemporary classical"]},
-    {"root": "blues",       "keywords": ["blues"]},
+    {"root": "r&b/soul",    "keywords": ["r&b", "rnb", "soul", "funk", "motown", "neo soul"]},
     {"root": "reggae",      "keywords": ["reggae", "ska", "dub", "dancehall"]},
+    {"root": "jazz",        "keywords": ["jazz", "bebop", "swing", "bossa", "big band"]},
+    {"root": "blues",       "keywords": ["blues"]},
     {"root": "country",     "keywords": ["country", "bluegrass", "americana", "honky"]},
     {"root": "folk",        "keywords": ["folk", "singer-songwriter", "singer songwriter"]},
-    {"root": "r&b/soul",    "keywords": ["r&b", "rnb", "soul", "funk", "motown", "neo soul"]},
-    {"root": "chanson_fr",  "keywords": ["chanson", "variété", "variete", "french pop", "francais", "française"]},
-    {"root": "pop",         "keywords": ["pop"]},
-    {"root": "rock",        "keywords": ["rock", "grunge", "shoegaze", "britpop", "indie"]}
+    {"root": "classical",   "keywords": ["classical", "baroque", "orchestral", "opera", "symphony", "contemporary classical", "romantic era"]},
+    {"root": "electronic",  "keywords": ["electronic", "electro", "house", "techno", "trance", "edm", "dubstep", "drum and bass", "dnb", "synth", "idm", "ambient", "downtempo", "garage", "trip hop", "big beat"]},
+    {"root": "rock",        "keywords": ["rock", "grunge", "shoegaze", "britpop", "indie", "new wave"]},
+    {"root": "pop",         "keywords": ["pop"]}
   ]
 }

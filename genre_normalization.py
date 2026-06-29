@@ -64,6 +64,25 @@ def primary_root(genre_list, rules):
     return "unknown"
 
 
+def infer_root(genre_list, rules):
+    """Infer an album's root family from its *whole* tag set.
+
+    Scans rules in priority order (file order) and returns the root of the first
+    rule whose keyword matches ANY tag — so a strong signal anywhere in the list
+    (e.g. ``post-rock`` among ``ambient, post-rock``) wins over tag position.
+    Unmatched tag sets fall back to the most specific tag (the last one, since
+    tags are sorted broad->niche), never a bare ``"unknown"``.
+    """
+    norm_tags = [_norm(t) for t in (genre_list or []) if _norm(t)]
+    if not norm_tags:
+        return "unknown"
+    for rule in rules:
+        for tag in norm_tags:
+            if any(kw in tag for kw in rule["keywords"]):
+                return rule["root"]
+    return norm_tags[-1]
+
+
 def display_root(root):
     return root.replace("_", " ").title()
 
@@ -97,6 +116,53 @@ def genre_similarity_matrix(genre_lists, rules, root_weight):
         for token, value in feats.items():
             matrix[i, index[token]] = value
     return cosine_similarity(matrix)
+
+
+# -----------------------------
+#  Multi-source consensus
+# -----------------------------
+# Relative trust per provider — specific album/style sources outweigh broad
+# artist-level ones, so a single noisy artist genre cannot dominate.
+SOURCE_WEIGHTS = {
+    "Discogs": 3.0,
+    "Spotify Album": 2.5,
+    "MusicBrainz": 2.0,
+    "LastFM Album": 2.0,
+    "Wikipedia": 1.5,
+    "Spotify Track Artist": 1.5,
+    "LastFM Track": 1.2,
+    "Spotify Artist": 1.0,
+    "iTunes": 1.0,
+}
+
+
+def merge_consensus(collected, source_weights=None, keep_ratio=0.34, top_k=8):
+    """Merge tags from several providers by weighted vote.
+
+    ``collected`` is a list of ``(source_label, tags)``. Each tag accrues its
+    provider's weight; tags far below the top score are dropped (cuts
+    single-source outliers) and the strongest ``top_k`` are returned, preserving
+    a human-readable casing. Deterministic ordering (weight desc, then name).
+    """
+    weights = source_weights if source_weights is not None else SOURCE_WEIGHTS
+    acc = {}
+    display = {}
+    for source, tags in collected:
+        weight = weights.get(source, 1.0)
+        seen = set()
+        for tag in tags:
+            key = _norm(tag)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            acc[key] = acc.get(key, 0.0) + weight
+            display.setdefault(key, " ".join(str(tag).strip().split()))
+    if not acc:
+        return []
+    top = max(acc.values())
+    ranked = sorted(acc, key=lambda k: (-acc[k], k))
+    kept = [k for k in ranked if acc[k] >= top * keep_ratio][:top_k]
+    return [display[k] for k in kept]
 
 
 # -----------------------------

@@ -27,12 +27,29 @@ API_KEY = api_key
 [CLUSTERING]
 segmentation_strength = 0.6
 max_clusters = 10
+; Ordering strategy:
+;   two_level (default) = macro by root family, micro by full tags (no ping-pong)
+;   roots               = single pass on root-weighted similarity
+;   legacy              = single pass on plain per-tag similarity
+ordering_mode = two_level
+; Snap each artist's albums to that artist's majority root family, so a single
+; album is not an isolated outlier. Off by default (can over-merge genre-diverse
+; artists). Override-pinned roots are never changed.
+artist_root_consistency = false
 ; Extra weight given to each album's genre ROOT family (e.g. all *punk* -> punk)
 ; when computing album similarity. Higher = albums of the same broad family stay
 ; closer together, reducing fragmentation. 0 disables root weighting. Default 2.0.
 genre_root_weight = 2.0
 ; Optional path to a custom root-family mapping (defaults to genre_roots.json).
 ; genre_roots_file = genre_roots.json
+
+[GENRE]
+; Manual genre overrides (absolute priority over providers and root inference).
+; Defaults to genre_overrides.json; edit that file to pin tags/root per artist.
+; overrides_file = genre_overrides.json
+; Resolution strategy: first_match (default, fast) or consensus (merge several
+; providers by weighted vote — more accurate, more HTTP calls; results cached).
+; resolution = first_match
 
 [CACHE]
 ; Persistent genre cache so repeat runs don't re-fetch genres (15-20 min -> seconds).

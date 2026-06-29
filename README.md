@@ -95,12 +95,62 @@ genre_root_weight = 2.0
 # genre_roots_file = genre_roots.json   # optional custom mapping
 ```
 
-The mapping in `genre_roots.json` is a simple, extensible keyword→root table (first match wins,
-unmatched tags fall back to their first word). At the end of each run a **before/after metric**
-is printed — average Jaccard overlap between adjacent albums and the number of fragmented root
-families — comparing the legacy per-tag ordering to the root-weighted one. The original
-composite labels are preserved in the CSV's `Album Genre` column, and a `Root Genre` column is
-added for transparency.
+The mapping in `genre_roots.json` is a simple, extensible keyword→root table (first match wins;
+`infer_root` scans an album's *whole* tag set in priority order, and unmatched sets fall back to
+the most specific tag — never `Unknown`). The original composite labels are preserved in the
+CSV's `Album Genre` column, and a `Root Genre` column is added for transparency.
+
+#### Two-level ordering (default)
+
+Collapsing tags to roots alone can lose the gradient between neighbours. The default
+`ordering_mode = two_level` instead orders **macro by root family, micro by full tags**:
+
+- **Macro** — root families are ordered by the similarity of their tag *centroids*, so the
+  playlist moves through one family at a time (no Rock↔Pop ping-pong). Singleton/`Unknown`
+  families go to the tail.
+- **Micro** — inside each family, albums are ordered by full-tag similarity (the existing
+  chain/cluster logic), preserving fine transitions. Each block is flipped at its seam to
+  minimise the genre jump between families.
+
+By construction every root family is one contiguous block (fragmentation ≈ 0). A **before/after
+metric** is printed at the end of each run — average adjacent-album Jaccard overlap and the
+fragmented-root count — comparing `legacy`, `roots`, and `two_level`:
+
+```ini
+[CLUSTERING]
+genre_root_weight = 2.0          # weight per root family (used by the "roots" mode)
+ordering_mode = two_level        # two_level (default) | roots | legacy
+artist_root_consistency = false  # snap each artist's albums to their majority root
+```
+
+### Reliable genre classification
+
+Automatic genre resolution is inherently fuzzy. Three layers reduce and contain errors (with
+two-level ordering a wrong root moves a whole block, so this matters):
+
+1. **Manual overrides (`genre_overrides.json`)** — the guarantee layer. Pin tags and/or root
+   family per `Artist` or `Artist|Album` (case/accent-insensitive); absolute priority over every
+   provider and over root inference. Point elsewhere with `[GENRE] overrides_file`.
+2. **Consensus resolution** (`[GENRE] resolution = consensus`, opt-in) — instead of letting the
+   first provider win, collect tags from all providers and merge by **weighted vote** (specific
+   album/style sources outweigh broad artist genres), dropping single-source outliers. More HTTP
+   calls, but cached. Default is `first_match`.
+3. **Robust root inference** — `infer_root` uses the whole tag set with a priority order
+   (metal/punk/post-rock high, then latin, soundtrack, gospel, chanson…), so e.g. a `post-rock`
+   tag wins over a stray `ambient`.
+
+Optionally, `artist_root_consistency = true` snaps each artist's albums to that artist's majority
+root (override-pinned albums are never changed).
+
+#### Auditing genre errors
+
+`audit_genres.py` reads a sorted CSV and lists likely-misclassified albums (root `Unknown`, genre
+from a low-reliability single source, or root differing from the artist's majority) — your
+candidates for `genre_overrides.json`:
+
+```bash
+python audit_genres.py tidal_favorite_tracks_sorted_2026-06-29.csv --json
+```
 
 ### Genre cache (faster repeat runs)
 
