@@ -1,0 +1,19 @@
+{
+  "_comment": "Data-driven genre root families. Each rule maps a genre tag to a root family when any keyword is a substring of the lowercased tag. Rules are evaluated top to bottom; the first match wins. Tags matching no rule fall back to their first word. Extend freely.",
+  "rules": [
+    {"root": "punk",        "keywords": ["punk", "emo", "hardcore", "screamo"]},
+    {"root": "metal",       "keywords": ["metal", "metalcore", "djent", "grindcore", "doom", "thrash"]},
+    {"root": "hip hop",     "keywords": ["hip hop", "hip-hop", "rap", "trap", "drill", "grime"]},
+    {"root": "electronic",  "keywords": ["electronic", "electro", "house", "techno", "trance", "edm", "dubstep", "drum and bass", "dnb", "synth", "idm", "ambient", "downtempo", "garage"]},
+    {"root": "jazz",        "keywords": ["jazz", "bebop", "swing", "bossa"]},
+    {"root": "classical",   "keywords": ["classical", "baroque", "orchestral", "opera", "symphony", "contemporary classical"]},
+    {"root": "blues",       "keywords": ["blues"]},
+    {"root": "reggae",      "keywords": ["reggae", "ska", "dub", "dancehall"]},
+    {"root": "country",     "keywords": ["country", "bluegrass", "americana", "honky"]},
+    {"root": "folk",        "keywords": ["folk", "singer-songwriter", "singer songwriter"]},
+    {"root": "r&b/soul",    "keywords": ["r&b", "rnb", "soul", "funk", "motown", "neo soul"]},
+    {"root": "chanson_fr",  "keywords": ["chanson", "variété", "variete", "french pop", "francais", "française"]},
+    {"root": "pop",         "keywords": ["pop"]},
+    {"root": "rock",        "keywords": ["rock", "grunge", "shoegaze", "britpop", "indie"]}
+  ]
+}

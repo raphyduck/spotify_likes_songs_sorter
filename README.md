@@ -79,6 +79,55 @@ max_clusters = 10
 
 Lower `segmentation_strength` values keep broader groups (fewer cuts), while higher values favor more, smaller clusters and earlier resets in the chaining order. Increase `max_clusters` only if you have many distinct genre sets and want the silhouette search to consider finer splits.
 
+#### Genre root normalization
+
+Album genres are fine-grained, composite tag lists (e.g. `Punk, Pop Punk, Emo` vs
+`Punk, Skate Punk`). Album similarity already compares *sets of tags*, but two albums from the
+same broad family can still look distant when their sub-tags differ, which fragments the
+final order (a family reappears at non-contiguous positions). To smooth this, each tag is
+mapped to a coarse **root family** (data-driven, see `genre_roots.json`) and the root token is
+given extra weight when computing similarity:
+
+```ini
+[CLUSTERING]
+# Extra weight per album root family; higher = same-family albums stay closer. Default 2.0.
+genre_root_weight = 2.0
+# genre_roots_file = genre_roots.json   # optional custom mapping
+```
+
+The mapping in `genre_roots.json` is a simple, extensible keyword→root table (first match wins,
+unmatched tags fall back to their first word). At the end of each run a **before/after metric**
+is printed — average Jaccard overlap between adjacent albums and the number of fragmented root
+families — comparing the legacy per-tag ordering to the root-weighted one. The original
+composite labels are preserved in the CSV's `Album Genre` column, and a `Root Genre` column is
+added for transparency.
+
+### Genre cache (faster repeat runs)
+
+Genre enrichment makes many third-party HTTP calls and can take 15-20 minutes on a large
+library. Because genres are essentially fixed per album/artist, results are cached in a
+**persistent two-level cache** (an in-memory layer plus a durable store), so a second run on
+the same library finishes the enrichment step in seconds.
+
+Configure it under `[CACHE]` in `settings.ini`:
+
+```ini
+[CACHE]
+backend = redis                       # redis | file | none
+redis_url = redis://localhost:6379/0
+ttl_days = 90                         # TTL for found genres
+negative_ttl_hours = 6                # short TTL so "not found" gets retried
+# file_path = ~/.cache/likes_songs_sorter/genre_cache.json
+```
+
+- **`redis`** (default) uses a local Redis server. If Redis is unreachable the run
+  **automatically falls back to a JSON file cache** (with a warning) instead of failing.
+- **`file`** uses the JSON file directly; **`none`** disables persistence.
+- The cached value keeps the resolved genres *and* their `source`, so the CSV's `source`
+  column is identical across cached runs.
+- CLI overrides: `--refresh-cache` re-fetches from providers and overwrites the cache;
+  `--no-cache` disables the cache for that run.
+
 ## Usage
 
 1. Ensure your virtual environment is active and your configuration file is set up.
@@ -86,7 +135,8 @@ Lower `segmentation_strength` values keep broader groups (fewer cuts), while hig
    ```bash
    python sorter.py
    ```
-   You can also skip the service prompt with `--service spotify` or `--service tidal`.
+   You can also skip the service prompt with `--service spotify` or `--service tidal`, and
+   control the genre cache with `--refresh-cache` / `--no-cache`.
 3. Follow the console prompts:
    - First choose the streaming service: `[1] Spotify` / `[2] Tidal`.
    - Authenticate (Spotify console paste flow, or Tidal device link — first run only).

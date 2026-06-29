@@ -27,5 +27,25 @@ API_KEY = api_key
 [CLUSTERING]
 segmentation_strength = 0.6
 max_clusters = 10
+; Extra weight given to each album's genre ROOT family (e.g. all *punk* -> punk)
+; when computing album similarity. Higher = albums of the same broad family stay
+; closer together, reducing fragmentation. 0 disables root weighting. Default 2.0.
+genre_root_weight = 2.0
+; Optional path to a custom root-family mapping (defaults to genre_roots.json).
+; genre_roots_file = genre_roots.json
+
+[CACHE]
+; Persistent genre cache so repeat runs don't re-fetch genres (15-20 min -> seconds).
+; backend: redis | file | none
+backend = redis
+redis_url = redis://localhost:6379/0
+; ttl_days applies to found genres; negative (not-found) results use a short TTL
+; so they get retried. Override the file location with file_path if desired.
+ttl_days = 90
+negative_ttl_hours = 6
+; file_path = ~/.cache/likes_songs_sorter/genre_cache.json
+;
+; If Redis is unreachable the run automatically falls back to the file cache.
+; CLI overrides: --refresh-cache (re-fetch & overwrite), --no-cache (disable).
 
 ; The iTunes Search fallback requires no API key and needs no configuration.
