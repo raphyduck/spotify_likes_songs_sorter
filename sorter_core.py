@@ -29,6 +29,7 @@ from genre_normalization import (
     genre_similarity_matrix,
     avg_adjacent_overlap,
     count_fragmented_roots,
+    merge_consensus,
 )
 from genre_overrides import load_overrides, lookup_override
 
@@ -136,13 +137,18 @@ def _collect_source(backend):
 # -----------------------------
 #  Genre enrichment
 # -----------------------------
-def _make_genre_resolver(backend, config, cache, overrides=None):
+def _make_genre_resolver(backend, config, cache, overrides=None,
+                         resolution="first_match"):
+    consensus = resolution == "consensus"
+
     def get_best_genre(song_name, artist_name, album_name, album_id, track_id):
         # Manual overrides win over everything (providers and cache).
         override = lookup_override(overrides, artist_name, album_name)
         if override and override.get("tags"):
             return override["tags"], "Override"
-        cache_key = make_key(album_id, album_name, artist_name)
+        # Namespace the cache by resolution mode so the two strategies don't
+        # serve each other's results.
+        cache_key = make_key(album_id, album_name, artist_name) + (":c" if consensus else "")
         cached = cache.get(cache_key)
         if cached is not None:
             return cached
@@ -150,11 +156,23 @@ def _make_genre_resolver(backend, config, cache, overrides=None):
         providers = backend.get_genre_providers(
             song_name, artist_name, album_name, clean_name, album_id, track_id, config
         )
-        for source, lookup in providers:
-            genres = lookup()
-            if genres:
-                cache.set(cache_key, genres, source)
-                return genres, source
+
+        if consensus:
+            # Collect from ALL providers and merge by weighted vote.
+            collected = [(source, tags) for source, lookup in providers
+                         for tags in [lookup()] if tags]
+            merged = merge_consensus(collected)
+            if merged:
+                cache.set(cache_key, merged, "Consensus")
+                return merged, "Consensus"
+        else:
+            # First provider that returns something wins.
+            for source, lookup in providers:
+                genres = lookup()
+                if genres:
+                    cache.set(cache_key, genres, source)
+                    return genres, source
+
         # Cache the negative result too (short TTL) so it is retried before long.
         cache.set(cache_key, [], "None")
         return [], "None"
@@ -440,12 +458,16 @@ def run(backend, config, refresh_cache=False, no_cache=False):
     if overrides:
         print(f"🛠️  Loaded {len(overrides)} manual genre override(s).")
 
+    resolution = config.get("GENRE", "resolution", fallback="first_match").strip().lower()
+    if resolution not in ("first_match", "consensus"):
+        resolution = "first_match"
+
     cache = build_cache_from_config(config, refresh=refresh_cache, disabled=no_cache)
     if cache.enabled:
         mode = " (refresh)" if refresh_cache else ""
         print(f"🗃️  Genre cache: {cache.backend}{mode}")
-    print("🔎 Fetching genres for songs (with shared helpers)...")
-    get_best_genre = _make_genre_resolver(backend, config, cache, overrides)
+    print(f"🔎 Fetching genres for songs (resolution: {resolution})...")
+    get_best_genre = _make_genre_resolver(backend, config, cache, overrides, resolution)
     album_genres, album_genre_sources = [], []
     try:
         for row in tqdm(df.to_dict("records"), total=len(df), desc="Genres", unit="track"):
