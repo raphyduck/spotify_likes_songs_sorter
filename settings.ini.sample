@@ -27,6 +27,11 @@ API_KEY = api_key
 [CLUSTERING]
 segmentation_strength = 0.6
 max_clusters = 10
+; Ordering strategy:
+;   two_level (default) = macro by root family, micro by full tags (no ping-pong)
+;   roots               = single pass on root-weighted similarity
+;   legacy              = single pass on plain per-tag similarity
+ordering_mode = two_level
 ; Extra weight given to each album's genre ROOT family (e.g. all *punk* -> punk)
 ; when computing album similarity. Higher = albums of the same broad family stay
 ; closer together, reducing fragmentation. 0 disables root weighting. Default 2.0.

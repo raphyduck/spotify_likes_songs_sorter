@@ -8,6 +8,7 @@ the ordered playlist and writes a CSV export.
 
 import sys
 import time
+from collections import OrderedDict
 from datetime import datetime
 
 import pandas as pd
@@ -259,6 +260,105 @@ def _order_from_similarity(names, sim, segmentation_strength, max_clusters):
     return sorted_albums
 
 
+def _nearest_neighbor_order(labels, sim):
+    """Greedy single chain over ``labels`` using similarity matrix ``sim``.
+
+    Starts from the most central label (highest mean similarity) and repeatedly
+    appends the most similar unused label. Deterministic (ties -> lower index).
+    """
+    n = len(labels)
+    if n <= 1:
+        return list(labels)
+    remaining = set(range(n))
+    start = int(np.argmax(sim.mean(axis=1)))
+    order = [start]
+    remaining.discard(start)
+    while remaining:
+        last = order[-1]
+        best = max(remaining, key=lambda j: (sim[last, j], -j))
+        order.append(best)
+        remaining.discard(best)
+    return [labels[i] for i in order]
+
+
+def _two_level_order(names, M, sim_tags, tag_sets, roots,
+                     segmentation_strength, max_clusters):
+    """Order albums macro-by-root, micro-by-tags, with block orientation.
+
+    1. Micro: within each root family, order albums by full-tag similarity using
+       the existing chain/cluster logic.
+    2. Macro: order the root families by the cosine similarity of their tag
+       centroids (singleton/``unknown`` roots pushed to the tail).
+    3. Stitch the per-root blocks in macro order, flipping each block to
+       minimise the genre jump at the seam (max Jaccard across the boundary).
+    """
+    n = len(names)
+    if n <= 1:
+        return list(names)
+
+    groups = OrderedDict()
+    for i, root in enumerate(roots):
+        groups.setdefault(root, []).append(i)
+    root_labels = list(groups)
+
+    # Macro ordering of root families via tag-centroid similarity.
+    if M.shape[1] > 0:
+        centroids = np.array([M[groups[r]].mean(axis=0) for r in root_labels])
+        root_sim = cosine_similarity(centroids)
+    else:
+        root_sim = np.zeros((len(root_labels), len(root_labels)))
+    main = [k for k, r in enumerate(root_labels) if len(groups[r]) >= 2 and r != "unknown"]
+    tail = [k for k in range(len(root_labels)) if k not in main]
+    if main:
+        main_order = _nearest_neighbor_order(
+            [root_labels[k] for k in main], root_sim[np.ix_(main, main)]
+        )
+    else:
+        main_order = []
+    tail_order = sorted((root_labels[k] for k in tail), key=lambda r: (-len(groups[r]), r))
+    macro = main_order + tail_order
+
+    # Micro ordering inside each root family (full-tag similarity).
+    micro = {}
+    for root in root_labels:
+        idx = groups[root]
+        if len(idx) == 1:
+            micro[root] = [names[idx[0]]]
+        else:
+            sub_sim = sim_tags[np.ix_(idx, idx)]
+            sub_names = [names[i] for i in idx]
+            micro[root] = _order_from_similarity(
+                sub_names, sub_sim, segmentation_strength, max_clusters
+            )
+
+    name_to_set = dict(zip(names, tag_sets))
+
+    def jac(a, b):
+        sa, sb = name_to_set[a], name_to_set[b]
+        if not sa and not sb:
+            return 0.0
+        union = sa | sb
+        return len(sa & sb) / len(union) if union else 0.0
+
+    blocks = [micro[r] for r in macro if micro.get(r)]
+    result = []
+    for bi, block in enumerate(blocks):
+        if not result:
+            if bi + 1 < len(blocks):
+                nxt = blocks[bi + 1]
+                normal = max(jac(block[-1], nxt[0]), jac(block[-1], nxt[-1]))
+                flipped = max(jac(block[0], nxt[0]), jac(block[0], nxt[-1]))
+                if flipped > normal:
+                    block = list(reversed(block))
+            result.extend(block)
+            continue
+        last = result[-1]
+        if jac(last, block[-1]) > jac(last, block[0]):
+            block = list(reversed(block))
+        result.extend(block)
+    return result
+
+
 def _ordering_metric(order, tag_sets_by_name, root_by_name):
     ordered_tag_sets = [tag_sets_by_name[name] for name in order]
     ordered_roots = [root_by_name[name] for name in order]
@@ -275,8 +375,11 @@ def _album_root(genre_list, artist, album, rules, overrides):
     return infer_root(genre_list, rules)
 
 
+ORDERING_MODES = ("legacy", "roots", "two_level")
+
+
 def _order_albums(df, segmentation_strength, max_clusters, root_weight, rules,
-                  overrides=None):
+                  overrides=None, ordering_mode="two_level"):
     unique_albums_df = df.drop_duplicates(subset=["Unique Album"]).copy()
     raw_lists = [g if isinstance(g, list) else [] for g in unique_albums_df["Album Genre"]]
     genre_sorted = normalize_and_sort_genres(raw_lists)
@@ -294,21 +397,26 @@ def _order_albums(df, segmentation_strength, max_clusters, root_weight, rules,
     tag_sets_by_name = dict(zip(names, tag_sets))
     root_by_name = dict(zip(names, roots))
 
-    # Real ordering uses the root-weighted similarity (smoother, less fragmented).
+    # Per-tag one-hot (shared by legacy ordering and the two-level micro/macro
+    # steps) and the root-weighted similarity used by the single-pass "roots".
+    M = MultiLabelBinarizer().fit_transform(genre_sorted)
+    sim_tags = cosine_similarity(M) if M.shape[1] else np.zeros((len(names), len(names)))
     sim_roots = genre_similarity_matrix(genre_sorted, rules, root_weight)
-    order = _order_from_similarity(names, sim_roots, segmentation_strength, max_clusters)
 
-    # Legacy ordering (plain per-tag one-hot) is computed only to report the
-    # before/after metric — it does not affect the output.
-    sim_legacy = cosine_similarity(MultiLabelBinarizer().fit_transform(genre_sorted))
-    legacy_order = _order_from_similarity(names, sim_legacy, segmentation_strength, max_clusters)
-
-    metrics = {
-        "legacy": _ordering_metric(legacy_order, tag_sets_by_name, root_by_name),
-        "roots": _ordering_metric(order, tag_sets_by_name, root_by_name),
+    orders = {
+        "legacy": _order_from_similarity(names, sim_tags, segmentation_strength, max_clusters),
+        "roots": _order_from_similarity(names, sim_roots, segmentation_strength, max_clusters),
+        "two_level": _two_level_order(
+            names, M, sim_tags, tag_sets, roots, segmentation_strength, max_clusters
+        ),
     }
+    metrics = {m: _ordering_metric(o, tag_sets_by_name, root_by_name) for m, o in orders.items()}
 
-    sort_index = {name: i for i, name in enumerate(order)}
+    if ordering_mode not in orders:
+        ordering_mode = "two_level"
+    chosen = orders[ordering_mode]
+
+    sort_index = {name: i for i, name in enumerate(chosen)}
     unique_albums_df["Sort Order"] = unique_albums_df["Unique Album"].map(sort_index)
     unique_albums_df = unique_albums_df.sort_values("Sort Order")
     ordering = unique_albums_df[["Unique Album", "Sort Order", "Sorted Genres", "Root Genre"]]
@@ -373,16 +481,20 @@ def run(backend, config, refresh_cache=False, no_cache=False):
     root_weight = float(config.get("CLUSTERING", "genre_root_weight", fallback="2.0"))
     roots_file = config.get("CLUSTERING", "genre_roots_file", fallback=None) or None
     rules = load_genre_roots(roots_file)
+    ordering_mode = config.get("CLUSTERING", "ordering_mode", fallback="two_level").strip().lower()
+    if ordering_mode not in ORDERING_MODES:
+        ordering_mode = "two_level"
     ordering, metrics = _order_albums(
-        df, segmentation_strength, max_clusters, root_weight, rules, overrides
+        df, segmentation_strength, max_clusters, root_weight, rules, overrides, ordering_mode
     )
 
-    legacy, roots = metrics["legacy"], metrics["roots"]
+    legacy, roots, two = metrics["legacy"], metrics["roots"], metrics["two_level"]
     print("\n📊 Genre ordering (higher adjacent overlap / lower fragmentation is better):")
-    print(f"   Adjacent tag overlap (Jaccard): legacy {legacy['overlap']:.3f} "
-          f"→ roots {roots['overlap']:.3f}")
-    print(f"   Fragmented root families:       legacy {legacy['fragmented']} "
-          f"→ roots {roots['fragmented']}")
+    print(f"   Adjacent tag overlap (Jaccard): legacy {legacy['overlap']:.3f}  "
+          f"roots {roots['overlap']:.3f}  two_level {two['overlap']:.3f}")
+    print(f"   Fragmented root families:       legacy {legacy['fragmented']}  "
+          f"roots {roots['fragmented']}  two_level {two['fragmented']}")
+    print(f"   Active ordering mode: {ordering_mode}")
 
     final_df = (
         pd.merge(df, ordering, on="Unique Album", how="left")
