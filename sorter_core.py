@@ -396,8 +396,31 @@ def _album_root(genre_list, artist, album, rules, overrides):
 ORDERING_MODES = ("legacy", "roots", "two_level")
 
 
+def _apply_artist_consistency(roots, artists, pinned):
+    """Snap each artist's albums to that artist's majority root.
+
+    Albums pinned by an override keep their forced root. Ties (no strict
+    majority, count < 2) are left untouched. Deterministic.
+    """
+    from collections import Counter, defaultdict
+    by_artist = defaultdict(list)
+    for i, artist in enumerate(artists):
+        by_artist[artist].append(i)
+    for idxs in by_artist.values():
+        if len(idxs) < 2:
+            continue
+        counts = Counter(roots[i] for i in idxs)
+        top_root, top_n = counts.most_common(1)[0]
+        if top_n < 2:
+            continue
+        for i in idxs:
+            if not pinned[i]:
+                roots[i] = top_root
+    return roots
+
+
 def _order_albums(df, segmentation_strength, max_clusters, root_weight, rules,
-                  overrides=None, ordering_mode="two_level"):
+                  overrides=None, ordering_mode="two_level", artist_consistency=False):
     unique_albums_df = df.drop_duplicates(subset=["Unique Album"]).copy()
     raw_lists = [g if isinstance(g, list) else [] for g in unique_albums_df["Album Genre"]]
     genre_sorted = normalize_and_sort_genres(raw_lists)
@@ -407,10 +430,16 @@ def _order_albums(df, segmentation_strength, max_clusters, root_weight, rules,
     artists = list(unique_albums_df["Artist"])
     albums = list(unique_albums_df["Album"])
     tag_sets = [{t.strip().lower() for t in sub if t.strip()} for sub in genre_sorted]
-    roots = [
-        _album_root(genre_sorted[i], artists[i], albums[i], rules, overrides)
-        for i in range(len(genre_sorted))
-    ]
+    pinned = []
+    roots = []
+    for i in range(len(genre_sorted)):
+        override = lookup_override(overrides, artists[i], albums[i])
+        forced = bool(override and override.get("root"))
+        pinned.append(forced)
+        roots.append(override["root"] if forced
+                     else infer_root(genre_sorted[i], rules))
+    if artist_consistency:
+        roots = _apply_artist_consistency(roots, artists, pinned)
     unique_albums_df["Root Genre"] = [display_root(r) for r in roots]
     tag_sets_by_name = dict(zip(names, tag_sets))
     root_by_name = dict(zip(names, roots))
@@ -506,8 +535,12 @@ def run(backend, config, refresh_cache=False, no_cache=False):
     ordering_mode = config.get("CLUSTERING", "ordering_mode", fallback="two_level").strip().lower()
     if ordering_mode not in ORDERING_MODES:
         ordering_mode = "two_level"
+    artist_consistency = config.getboolean(
+        "CLUSTERING", "artist_root_consistency", fallback=False
+    )
     ordering, metrics = _order_albums(
-        df, segmentation_strength, max_clusters, root_weight, rules, overrides, ordering_mode
+        df, segmentation_strength, max_clusters, root_weight, rules, overrides,
+        ordering_mode, artist_consistency
     )
 
     legacy, roots, two = metrics["legacy"], metrics["roots"], metrics["two_level"]
