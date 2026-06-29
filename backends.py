@@ -309,6 +309,7 @@ class TidalBackend(Backend):
             print("❌ Tidal authentication failed. Please retry.", file=sys.stderr)
             sys.exit(1)
         self.session = session
+        self._session_file = session_file
         print("✅ Authentication successful!\n")
 
         self._spotify = self._maybe_build_spotify_client(config)
@@ -452,7 +453,29 @@ class TidalBackend(Backend):
         return providers
 
     # --- output ---------------------------------------------------------------
+    def _refresh_tidal_token(self):
+        """Refresh the Tidal access token using the stored refresh token.
+
+        Genre enrichment can take >15 min without touching Tidal, by which
+        point the access token may have expired (HTTP 401 on the first write).
+        Refreshing right before writes -- and on a 401 -- keeps the run alive.
+        """
+        try:
+            rt = getattr(self.session, "refresh_token", None)
+            if rt and self.session.token_refresh(rt):
+                sf = getattr(self, "_session_file", None)
+                if sf is not None:
+                    try:
+                        self.session.save_session_to_file(sf)
+                    except Exception:
+                        pass
+                return True
+        except Exception as exc:
+            print(f"\u26a0\ufe0f  Tidal token refresh failed: {exc}", file=sys.stderr)
+        return False
+
     def create_playlist(self, name, description):
+        self._refresh_tidal_token()
         return self.session.user.create_playlist(name, description)
 
     def add_tracks(self, playlist, ordered_rows):
@@ -478,6 +501,11 @@ class TidalBackend(Backend):
                     status = getattr(exc.response, "status_code", None)
                     if status == 412 and attempt < 5:
                         time.sleep(1.0 + attempt)
+                        playlist = UserPlaylist(self.session, playlist_id)
+                        continue
+                    if status == 401 and attempt < 5:
+                        self._refresh_tidal_token()
+                        time.sleep(1.0)
                         playlist = UserPlaylist(self.session, playlist_id)
                         continue
                     raise
