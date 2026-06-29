@@ -21,6 +21,14 @@ from tqdm import tqdm
 
 from genre_helpers import clean_album_name, normalize_and_sort_genres
 from genre_cache import build_cache_from_config, make_key
+from genre_normalization import (
+    load_genre_roots,
+    primary_root,
+    display_root,
+    genre_similarity_matrix,
+    avg_adjacent_overlap,
+    count_fragmented_roots,
+)
 
 
 # -----------------------------
@@ -151,14 +159,13 @@ def _make_genre_resolver(backend, config, cache):
 # -----------------------------
 #  Clustering + ordering
 # -----------------------------
-def _order_albums(df, segmentation_strength, max_clusters):
-    unique_albums_df = df.drop_duplicates(subset=["Unique Album"]).copy()
-    raw_lists = [g if isinstance(g, list) else [] for g in unique_albums_df["Album Genre"]]
-    genre_sorted = normalize_and_sort_genres(raw_lists)
-    unique_albums_df["Sorted Genres"] = [", ".join(sub) for sub in genre_sorted]
-    genre_onehot = MultiLabelBinarizer().fit_transform(genre_sorted)
+def _order_from_similarity(names, sim, segmentation_strength, max_clusters):
+    """Cluster (MST + silhouette) and greedily chain albums into one order.
 
-    sim = cosine_similarity(genre_onehot)
+    ``names`` are the album identifiers aligned to the rows/cols of ``sim``;
+    returns the album names in their final order.
+    """
+    n = len(names)
     dist = 1.0 - sim
     mst = minimum_spanning_tree(dist).toarray()
     G = nx.from_numpy_array(mst)
@@ -175,10 +182,10 @@ def _order_albums(df, segmentation_strength, max_clusters):
 
     labels_best, best_score = None, -1.0
     max_k = min(max_clusters, len(edges) + 1)
-    if len(unique_albums_df) > 2 and max_k >= 2:
+    if n > 2 and max_k >= 2:
         for k in range(2, max_k + 1):
             comps = _components_for_k(k)
-            labels = [-1] * len(unique_albums_df)
+            labels = [-1] * n
             for lbl, comp in enumerate(comps):
                 for idx in comp:
                     labels[idx] = lbl
@@ -208,7 +215,7 @@ def _order_albums(df, segmentation_strength, max_clusters):
     final_comps = (
         [set(c) for c in large_comps]
         or [set(c) for c in components]
-        or [set(range(len(unique_albums_df)))]
+        or [set(range(n))]
     )
     for small in small_comps:
         for idx in small:
@@ -239,17 +246,55 @@ def _order_albums(df, segmentation_strength, max_clusters):
                 chain.append(best); remaining.remove(best); prev_sim = val
         return chain
 
-    album_similarity = pd.DataFrame(
-        sim, index=unique_albums_df["Unique Album"], columns=unique_albums_df["Unique Album"]
-    )
+    album_similarity = pd.DataFrame(sim, index=names, columns=names)
     sorted_albums = []
     for comp in final_comps:
-        names = [unique_albums_df["Unique Album"].iloc[i] for i in comp]
-        sorted_albums.extend(greedy_chain(names, album_similarity, reset_factor))
+        comp_names = [names[i] for i in comp]
+        sorted_albums.extend(greedy_chain(comp_names, album_similarity, reset_factor))
+    return sorted_albums
 
-    unique_albums_df["Sort Order"] = unique_albums_df["Unique Album"].apply(sorted_albums.index)
+
+def _ordering_metric(order, tag_sets_by_name, root_by_name):
+    ordered_tag_sets = [tag_sets_by_name[name] for name in order]
+    ordered_roots = [root_by_name[name] for name in order]
+    return {
+        "overlap": avg_adjacent_overlap(ordered_tag_sets),
+        "fragmented": count_fragmented_roots(ordered_roots),
+    }
+
+
+def _order_albums(df, segmentation_strength, max_clusters, root_weight, rules):
+    unique_albums_df = df.drop_duplicates(subset=["Unique Album"]).copy()
+    raw_lists = [g if isinstance(g, list) else [] for g in unique_albums_df["Album Genre"]]
+    genre_sorted = normalize_and_sort_genres(raw_lists)
+    unique_albums_df["Sorted Genres"] = [", ".join(sub) for sub in genre_sorted]
+
+    names = list(unique_albums_df["Unique Album"])
+    tag_sets = [{t.strip().lower() for t in sub if t.strip()} for sub in genre_sorted]
+    roots = [primary_root(sub, rules) for sub in genre_sorted]
+    unique_albums_df["Root Genre"] = [display_root(r) for r in roots]
+    tag_sets_by_name = dict(zip(names, tag_sets))
+    root_by_name = dict(zip(names, roots))
+
+    # Real ordering uses the root-weighted similarity (smoother, less fragmented).
+    sim_roots = genre_similarity_matrix(genre_sorted, rules, root_weight)
+    order = _order_from_similarity(names, sim_roots, segmentation_strength, max_clusters)
+
+    # Legacy ordering (plain per-tag one-hot) is computed only to report the
+    # before/after metric — it does not affect the output.
+    sim_legacy = cosine_similarity(MultiLabelBinarizer().fit_transform(genre_sorted))
+    legacy_order = _order_from_similarity(names, sim_legacy, segmentation_strength, max_clusters)
+
+    metrics = {
+        "legacy": _ordering_metric(legacy_order, tag_sets_by_name, root_by_name),
+        "roots": _ordering_metric(order, tag_sets_by_name, root_by_name),
+    }
+
+    sort_index = {name: i for i, name in enumerate(order)}
+    unique_albums_df["Sort Order"] = unique_albums_df["Unique Album"].map(sort_index)
     unique_albums_df = unique_albums_df.sort_values("Sort Order")
-    return unique_albums_df[["Unique Album", "Sort Order", "Sorted Genres"]]
+    ordering = unique_albums_df[["Unique Album", "Sort Order", "Sorted Genres", "Root Genre"]]
+    return ordering, metrics
 
 
 # -----------------------------
@@ -292,7 +337,19 @@ def run(backend, config, refresh_cache=False, no_cache=False):
 
     segmentation_strength = float(config.get("CLUSTERING", "segmentation_strength", fallback="0.6"))
     max_clusters = int(config.get("CLUSTERING", "max_clusters", fallback="10"))
-    ordering = _order_albums(df, segmentation_strength, max_clusters)
+    root_weight = float(config.get("CLUSTERING", "genre_root_weight", fallback="2.0"))
+    roots_file = config.get("CLUSTERING", "genre_roots_file", fallback=None) or None
+    rules = load_genre_roots(roots_file)
+    ordering, metrics = _order_albums(
+        df, segmentation_strength, max_clusters, root_weight, rules
+    )
+
+    legacy, roots = metrics["legacy"], metrics["roots"]
+    print("\n📊 Genre ordering (higher adjacent overlap / lower fragmentation is better):")
+    print(f"   Adjacent tag overlap (Jaccard): legacy {legacy['overlap']:.3f} "
+          f"→ roots {roots['overlap']:.3f}")
+    print(f"   Fragmented root families:       legacy {legacy['fragmented']} "
+          f"→ roots {roots['fragmented']}")
 
     final_df = (
         pd.merge(df, ordering, on="Unique Album", how="left")

@@ -27,6 +27,12 @@ API_KEY = api_key
 [CLUSTERING]
 segmentation_strength = 0.6
 max_clusters = 10
+; Extra weight given to each album's genre ROOT family (e.g. all *punk* -> punk)
+; when computing album similarity. Higher = albums of the same broad family stay
+; closer together, reducing fragmentation. 0 disables root weighting. Default 2.0.
+genre_root_weight = 2.0
+; Optional path to a custom root-family mapping (defaults to genre_roots.json).
+; genre_roots_file = genre_roots.json
 
 [CACHE]
 ; Persistent genre cache so repeat runs don't re-fetch genres (15-20 min -> seconds).

@@ -79,6 +79,29 @@ max_clusters = 10
 
 Lower `segmentation_strength` values keep broader groups (fewer cuts), while higher values favor more, smaller clusters and earlier resets in the chaining order. Increase `max_clusters` only if you have many distinct genre sets and want the silhouette search to consider finer splits.
 
+#### Genre root normalization
+
+Album genres are fine-grained, composite tag lists (e.g. `Punk, Pop Punk, Emo` vs
+`Punk, Skate Punk`). Album similarity already compares *sets of tags*, but two albums from the
+same broad family can still look distant when their sub-tags differ, which fragments the
+final order (a family reappears at non-contiguous positions). To smooth this, each tag is
+mapped to a coarse **root family** (data-driven, see `genre_roots.json`) and the root token is
+given extra weight when computing similarity:
+
+```ini
+[CLUSTERING]
+# Extra weight per album root family; higher = same-family albums stay closer. Default 2.0.
+genre_root_weight = 2.0
+# genre_roots_file = genre_roots.json   # optional custom mapping
+```
+
+The mapping in `genre_roots.json` is a simple, extensible keyword→root table (first match wins,
+unmatched tags fall back to their first word). At the end of each run a **before/after metric**
+is printed — average Jaccard overlap between adjacent albums and the number of fragmented root
+families — comparing the legacy per-tag ordering to the root-weighted one. The original
+composite labels are preserved in the CSV's `Album Genre` column, and a `Root Genre` column is
+added for transparency.
+
 ### Genre cache (faster repeat runs)
 
 Genre enrichment makes many third-party HTTP calls and can take 15-20 minutes on a large
