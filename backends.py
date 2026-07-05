@@ -3,10 +3,14 @@
 Each backend hides the service-specific bits (authentication, fetching liked
 tracks/playlists, the per-service genre providers, and creating/filling the
 output playlist) behind a small common interface consumed by ``sorter_core``.
-Two backends are provided: :class:`SpotifyBackend` and :class:`TidalBackend`.
+Three backends are provided: :class:`SpotifyBackend`, :class:`TidalBackend`
+and :class:`SubsonicBackend` (Navidrome or any Subsonic-compatible server).
 """
 
+import hashlib
 import os
+import re
+import secrets
 import sys
 import time
 from pathlib import Path
@@ -15,6 +19,7 @@ from urllib.parse import urlparse, parse_qs
 from tqdm import tqdm
 
 from genre_helpers import (
+    clean_tags,
     get_discogs_album_info,
     get_itunes_album_info,
     get_lastfm_album_info,
@@ -513,7 +518,196 @@ class TidalBackend(Backend):
         return added, 0
 
 
+# -----------------------------------------------------------------------------
+#  Subsonic / Navidrome
+# -----------------------------------------------------------------------------
+class SubsonicBackend(Backend):
+    key = "subsonic"
+    display_name = "Navidrome (Subsonic)"
+    liked_label = "Starred tracks"
+    liked_slug = "starred_tracks"
+    track_id_col = "Subsonic Track ID"
+    supports_local = True  # the whole library is local files
+
+    CHUNK_SIZE = 200
+
+    def __init__(self):
+        self.base_url = None
+        self.username = None
+        self.password = None
+        self.client_name = "likes_songs_sorter"
+        self.api_version = "1.16.1"
+        self._discogs_key = None
+        self._lastfm_key = None
+        # Genre tags read from the files' metadata, keyed by Subsonic track id.
+        # ``get_genre_providers`` only receives the track id (the song argument
+        # is the title string), so the mapping step stashes the tags here.
+        self._genre_by_track = {}
+
+    # --- auth -----------------------------------------------------------------
+    def authenticate(self, config):
+        self._discogs_key = config["DISCOGS"]["API_KEY"]
+        self._lastfm_key = config["LASTFM"]["API_KEY"]
+        self.base_url = config.get("NAVIDROME", "url").rstrip("/")
+        self.username = config.get("NAVIDROME", "username")
+        self.password = config.get("NAVIDROME", "password")
+        self.client_name = config.get("NAVIDROME", "client_name",
+                                      fallback="likes_songs_sorter")
+        self.api_version = config.get("NAVIDROME", "api_version", fallback="1.16.1")
+
+        print("\n🔄 Authenticating with Navidrome...")
+        # A simple ping validates the credentials right away instead of letting
+        # the first real call blow up much later in the run.
+        self._request("ping")
+        print("✅ Authentication successful!\n")
+
+    def _auth_params(self):
+        # Subsonic salt+token auth: the clear-text password never goes over the
+        # wire, only a single-use salted hash.
+        salt = secrets.token_hex(6)
+        token = hashlib.md5((self.password + salt).encode("utf-8")).hexdigest()
+        return {
+            "u": self.username,
+            "t": token,
+            "s": salt,
+            "v": self.api_version,
+            "c": self.client_name,
+            "f": "json",
+        }
+
+    @staticmethod
+    def _check_payload(resp):
+        payload = resp.json().get("subsonic-response", {})
+        if payload.get("status") != "ok":
+            err = payload.get("error", {})
+            raise RuntimeError(
+                f"Subsonic error {err.get('code')}: {err.get('message')}"
+            )
+        return payload
+
+    def _request(self, endpoint, params=None):
+        import requests
+        query = self._auth_params()
+        if params:
+            query.update(params)
+        resp = requests.get(f"{self.base_url}/rest/{endpoint}", params=query,
+                            timeout=30)
+        resp.raise_for_status()
+        return self._check_payload(resp)
+
+    # --- mapping --------------------------------------------------------------
+    @staticmethod
+    def _song_genres(song):
+        # OpenSubsonic servers (Navidrome) expose a multi-valued ``genres``
+        # list; plain Subsonic only has a single ``genre`` string that may pack
+        # several tags behind separators.
+        genres = [g.get("name") for g in song.get("genres") or []
+                  if isinstance(g, dict)]
+        if not genres and song.get("genre"):
+            genres = re.split(r"[;,/]", song["genre"])
+        return clean_tags([g.strip() for g in genres if g and g.strip()])
+
+    def _map_song(self, song):
+        if not song:
+            return None
+        track_id = song.get("id")
+        genres = self._song_genres(song)
+        if track_id and genres:
+            self._genre_by_track[str(track_id)] = genres
+        return {
+            "Song": song.get("title") or "Unknown Song",
+            "Artist": song.get("artist") or "Unknown Artist",
+            "Album": song.get("album") or "Unknown Album",
+            "Album ID": song.get("albumId"),
+            "Track Number": song.get("track"),
+            "Disc Number": song.get("discNumber"),
+            "Subsonic Track ID": str(track_id) if track_id is not None else None,
+        }
+
+    # --- fetching -------------------------------------------------------------
+    def get_liked_songs(self):
+        print("🎵 Fetching starred tracks from Navidrome...")
+        payload = self._request("getStarred2")
+        songs = payload.get("starred2", {}).get("song", [])
+        rows = [r for r in (self._map_song(s) for s in songs) if r]
+        print(f"🎉 Retrieved {len(rows)} starred tracks!\n")
+        return rows
+
+    def get_user_playlists(self):
+        payload = self._request("getPlaylists")
+        return payload.get("playlists", {}).get("playlist", [])
+
+    def playlist_display(self, playlist):
+        return (playlist.get("name") or "Untitled", playlist.get("songCount") or 0)
+
+    def get_playlist_tracks(self, selected_playlists):
+        rows = []
+        print("🎵 Fetching tracks from selected playlist(s)...")
+        for playlist in tqdm(selected_playlists, desc="Playlists", unit="playlist"):
+            payload = self._request("getPlaylist", {"id": playlist["id"]})
+            songs = payload.get("playlist", {}).get("entry", [])
+            rows.extend(r for r in (self._map_song(s) for s in songs) if r)
+        return rows
+
+    # --- genres ---------------------------------------------------------------
+    def get_genre_providers(self, song, artist, album, clean_album,
+                            album_id, track_id, config):
+        # The local file tag goes first (fast, usually already correct, zero
+        # network calls); the external providers fill in when the tag is empty,
+        # exactly like the name-based chain used for Tidal.
+        local_tags = self._genre_by_track.get(track_id)
+        providers = [("Local Tag", lambda: local_tags)]
+        providers.extend([
+            ("Discogs", lambda: get_discogs_album_info(clean_album, artist, self._discogs_key)),
+            ("LastFM Album", lambda: get_lastfm_album_info(clean_album, artist, self._lastfm_key)),
+            ("MusicBrainz", lambda: get_musicbrainz_album_info(clean_album, artist)),
+            ("LastFM Track", lambda: get_lastfm_track_info(song, artist, self._lastfm_key)),
+            ("Wikipedia", lambda: get_wikipedia_album_info(clean_album, artist)),
+            ("iTunes", lambda: get_itunes_album_info(clean_album, artist)),
+        ])
+        return providers
+
+    # --- output ---------------------------------------------------------------
+    def create_playlist(self, name, description):
+        # createPlaylist without songId creates an empty playlist; add_tracks
+        # fills it afterwards. Keep name+id together for add_tracks.
+        payload = self._request("createPlaylist", {"name": name})
+        playlist_id = payload.get("playlist", {}).get("id")
+        if not playlist_id:
+            raise RuntimeError("Subsonic createPlaylist returned no playlist id.")
+        if description:
+            self._request("updatePlaylist",
+                          {"playlistId": playlist_id, "comment": description})
+        return {"id": playlist_id, "name": name}
+
+    def add_tracks(self, playlist, ordered_rows):
+        import requests
+        track_ids = [
+            row.get(self.track_id_col)
+            for row in ordered_rows
+            if isinstance(row.get(self.track_id_col), str) and row.get(self.track_id_col)
+        ]
+        chunks = [track_ids[i:i + self.CHUNK_SIZE]
+                  for i in range(0, len(track_ids), self.CHUNK_SIZE)]
+        added = 0
+        for chunk in tqdm(chunks, desc="Uploading playlist", unit="chunk"):
+            # Subsonic wants a repeated songIdToAdd parameter, not a single
+            # comma-joined list -> build the query as a list of pairs.
+            query = self._auth_params()
+            query["playlistId"] = playlist["id"]
+            resp = requests.get(
+                f"{self.base_url}/rest/updatePlaylist",
+                params=list(query.items()) + [("songIdToAdd", tid) for tid in chunk],
+                timeout=60,
+            )
+            resp.raise_for_status()
+            self._check_payload(resp)
+            added += len(chunk)
+        return added, 0
+
+
 BACKENDS = {
     "spotify": SpotifyBackend,
     "tidal": TidalBackend,
+    "subsonic": SubsonicBackend,
 }
