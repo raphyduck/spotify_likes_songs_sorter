@@ -1,5 +1,6 @@
-; Configure only the service(s) you intend to use. At launch you pick Spotify
-; or Tidal; the genre providers and clustering settings below are shared.
+; Configure only the service(s) you intend to use. At launch you pick Spotify,
+; Tidal or Navidrome; the genre providers and clustering settings below are
+; shared.
 
 [SPOTIFY]
 CLIENT_ID = clientid
@@ -17,6 +18,16 @@ REDIRECT_URI = http://127.0.0.1:8080/
 ; genres FIRST (via the Client Credentials flow — no Spotify login needed):
 ; album-level genres (album matched by name + artist) take priority, then
 ; artist-level. Leave the Spotify placeholders untouched to disable this.
+
+[NAVIDROME]
+; Base URL of your Navidrome server (no trailing slash).
+url = https://navidrome.example.com
+username = user
+password = changeme
+; Client id sent to the Subsonic API (just an identifier, not a secret).
+client_name = likes_songs_sorter
+; Targeted Subsonic API version.
+api_version = 1.16.1
 
 [LASTFM]
 API_KEY = api_key
