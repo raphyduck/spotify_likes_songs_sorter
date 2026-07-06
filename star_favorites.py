@@ -14,11 +14,13 @@ Usage:
 import argparse
 import configparser
 import csv
+import difflib
 import hashlib
 import json
 import secrets
 import sys
 import unicodedata
+from collections import defaultdict
 
 import requests
 
@@ -98,6 +100,11 @@ def main():
     parser.add_argument("--config", default="settings.ini", help="Path to settings.ini")
     parser.add_argument("--dry-run", action="store_true",
                         help="Only report the match rate, do not star anything.")
+    parser.add_argument(
+        "--fuzzy-threshold", type=float, default=0.90,
+        help="Similarity (0-1) above which a non-exact favorite is matched by "
+             "fuzzy fallback. Set to 1.0 to disable fuzzy matching (exact only).",
+    )
     args = parser.parse_args()
 
     config = configparser.ConfigParser()
@@ -115,8 +122,11 @@ def main():
     wanted = {(normalize(artist), normalize(title)) for artist, title in favorites}
 
     # Index the whole Navidrome library by normalized (artist, title). An empty
-    # search3 query pages through every song (OpenSubsonic behaviour).
+    # search3 query pages through every song (OpenSubsonic behaviour). A second
+    # index groups titles by normalized artist so the fuzzy fallback only ever
+    # compares a favorite to titles by the *same* artist.
     index = {}
+    by_artist = defaultdict(list)  # artist_n -> list of (title_n, song_id)
     offset = 0
     while True:
         params = auth_params(username, password, client_name, api_version)
@@ -129,28 +139,59 @@ def main():
             index.setdefault(
                 (normalize(s.get("artist")), normalize(s.get("title"))), s["id"]
             )
+            by_artist[normalize(s.get("artist"))].append(
+                (normalize(s.get("title")), s["id"])
+            )
         offset += SEARCH_PAGE
     print(f"Indexed {len(index)} unique (artist, title) pairs from Navidrome.")
 
     matched = [index[k] for k in sorted(wanted) if k in index]
     missing = sorted(k for k in wanted if k not in index)
-    print(f"{len(matched)}/{len(wanted)} favorites found locally in Navidrome.")
-    if missing:
-        print("Sample of unmatched favorites (normalized):")
-        for artist, title in missing[:10]:
-            print(f"   • {artist} — {title}")
-        if len(missing) > 10:
-            print(f"   … and {len(missing) - 10} more.")
+
+    # Fuzzy fallback for favorites not matched exactly. Only titles by the SAME
+    # normalized artist are compared, so we never conflate two different acts;
+    # the fuzzy title match rescues typos / feat. / punctuation / minor spelling
+    # differences without matching two genuinely different songs.
+    fuzzy_matched = []
+    still_missing = []
+    if args.fuzzy_threshold < 1.0:
+        for artist_n, title_n in missing:
+            candidates = by_artist.get(artist_n)
+            if not candidates:
+                still_missing.append((artist_n, title_n))
+                continue
+            best_id, best_sim, best_title = None, 0.0, None
+            for cand_title_n, song_id in candidates:
+                sim = difflib.SequenceMatcher(None, title_n, cand_title_n).ratio()
+                if sim > best_sim:
+                    best_id, best_sim, best_title = song_id, sim, cand_title_n
+            if best_sim >= args.fuzzy_threshold:
+                fuzzy_matched.append((best_id, artist_n, title_n, best_title, best_sim))
+            else:
+                still_missing.append((artist_n, title_n))
+    else:
+        still_missing = missing
+
+    print(f"{len(matched)}/{len(wanted)} exact matches.")
+    if fuzzy_matched:
+        print(f"+{len(fuzzy_matched)} fuzzy matches (>= {args.fuzzy_threshold}):")
+        for song_id, artist_n, fav_title_n, lib_title_n, sim in sorted(
+            fuzzy_matched, key=lambda x: x[4], reverse=True
+        ):
+            print(f"   [{sim:.2f}] {artist_n}: {fav_title_n!r} ~ {lib_title_n!r}")
+    print(f"{len(still_missing)} favorites genuinely not found locally.")
 
     if args.dry_run:
         print("Dry run: nothing starred.")
         return
 
-    for i in range(0, len(matched), STAR_CHUNK):
-        chunk = matched[i:i + STAR_CHUNK]
+    to_star = matched + [row[0] for row in fuzzy_matched]
+    for i in range(0, len(to_star), STAR_CHUNK):
+        chunk = to_star[i:i + STAR_CHUNK]
         params = auth_params(username, password, client_name, api_version)
         subsonic_get(base_url, "star", params, extra=[("id", sid) for sid in chunk])
-    print(f"{len(matched)} tracks marked as starred.")
+    print(f"{len(to_star)} tracks marked as starred "
+          f"({len(matched)} exact + {len(fuzzy_matched)} fuzzy).")
 
 
 if __name__ == "__main__":
