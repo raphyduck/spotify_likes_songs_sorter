@@ -656,15 +656,28 @@ class SubsonicBackend(Backend):
         # network calls); the external providers fill in when the tag is empty,
         # exactly like the name-based chain used for Tidal.
         local_tags = self._genre_by_track.get(track_id)
-        providers = [("Local Tag", lambda: local_tags)]
-        providers.extend([
+        # option [GENRE] ignore_local_tags: quand vrai, on privilegie
+        # l'enrichissement multi-fournisseurs et le tag local ne sert plus
+        # que de dernier recours (evite que des tags locaux pauvres masquent
+        # les genres plus riches de Discogs/LastFM/MusicBrainz/iTunes).
+        ignore_local = False
+        try:
+            ignore_local = config.getboolean("GENRE", "ignore_local_tags", fallback=False)
+        except Exception:
+            ignore_local = False
+        external = [
             ("Discogs", lambda: get_discogs_album_info(clean_album, artist, self._discogs_key)),
             ("LastFM Album", lambda: get_lastfm_album_info(clean_album, artist, self._lastfm_key)),
             ("MusicBrainz", lambda: get_musicbrainz_album_info(clean_album, artist)),
             ("LastFM Track", lambda: get_lastfm_track_info(song, artist, self._lastfm_key)),
             ("Wikipedia", lambda: get_wikipedia_album_info(clean_album, artist)),
             ("iTunes", lambda: get_itunes_album_info(clean_album, artist)),
-        ])
+        ]
+        local = ("Local Tag", lambda: local_tags)
+        if ignore_local:
+            providers = external + [local]   # local en dernier recours
+        else:
+            providers = [local] + external   # comportement historique
         return providers
 
     # --- output ---------------------------------------------------------------
