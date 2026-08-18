@@ -1,6 +1,7 @@
 import requests
 from difflib import SequenceMatcher
 import re
+import unicodedata
 from collections import OrderedDict, Counter
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
@@ -175,17 +176,100 @@ def get_spotify_album_search_info(sp, album_name, artist_name):
         pass
     return []
 
+# Separateurs de chaines multi-artistes ("Magic System, Ahmed Chawki",
+# "Harris & Ford . 2 Engel & Charlie", "Ofenbach feat. Norma Jean Martine"...).
+_ARTIST_SPLIT_RE = re.compile(
+    r"\s*(?:[;,\u2022/\u00b7|]|\bfeat\.?\b|\bft\.?\b|\bwith\b|\bvs\.?\b)\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_accents(value):
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", str(value or ""))
+        if not unicodedata.combining(c)
+    )
+
+
+def _norm_artist(value):
+    """Cle de comparaison insensible aux accents, a la casse et a la ponctuation."""
+    return re.sub(r"[^a-z0-9]+", "", _strip_accents(value).lower())
+
+
+def _artist_words(value):
+    return set(re.findall(r"[a-z0-9]+", _strip_accents(value).lower()))
+
+
+def artist_query_variants(artist_name):
+    """Candidats de recherche pour une chaine d'artiste, le principal d'abord.
+
+    Spotify ne connait pas "Magic System, Ahmed Chawki" (zero resultat) mais
+    connait "Magic System". On essaie donc la chaine complete, puis le premier
+    artiste seul, puis l'inversion "Nom, Prenom" -> "Prenom Nom".
+    """
+    raw = str(artist_name or "").strip()
+    if not raw:
+        return []
+    variants = [raw]
+    parts = [p.strip() for p in _ARTIST_SPLIT_RE.split(raw) if p.strip()]
+    if len(parts) > 1:
+        variants.append(parts[0])
+        if len(parts) == 2:
+            variants.append(f"{parts[1]} {parts[0]}")
+    seen, out = set(), []
+    for v in variants:
+        if v.lower() not in seen:
+            seen.add(v.lower())
+            out.append(v)
+    return out
+
+
+def artist_hit_matches(requested, found):
+    """Le resultat Spotify porte-t-il vraiment le nom demande ?
+
+    Tolere les accents, la ponctuation et l'inversion des mots
+    ("Celine Dion"/"Celine Dion", "Neg\'Marrons"/"Neg\' Marrons",
+    "Cohen, Leonard"/"Leonard Cohen"), mais refuse les homonymes
+    ("Trust"/"Men I Trust", "Europe"/"D-Block Europe", "Haggard"/"Merle
+    Haggard") et les artistes dont le nom contient simplement le mot
+    "artist" ("ARTIST: UNKNOWN", "Bogdan Artistu", "Artist Music Video"),
+    qui remontent des que le filtre "artist:" se degrade en recherche floue.
+    """
+    a, b = _norm_artist(requested), _norm_artist(found)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    wa, wb = _artist_words(requested), _artist_words(found)
+    return bool(wa) and wa == wb
+
+
 def get_spotify_artist_genres(sp, artist_name):
     """
     Fetch genres directly from the artist record on Spotify.
+
+    La valeur est mise entre guillemets (sans quoi le filtre ``artist:`` se
+    degrade en recherche floue) et le nom du resultat est verifie : prendre
+    ``items[0]`` en aveugle attribuait par exemple le reggae de Bob Marley a
+    t.A.T.u. et le country de Merle Haggard au metal symphonique de Haggard.
+    Quand aucun resultat ne correspond, on renvoie ``[]`` pour que la chaine
+    de fournisseurs retombe sur Discogs / LastFM / MusicBrainz.
     """
-    try:
-        res = sp.search(q=f"artist:{artist_name}", type="artist", limit=1)
-        items = res.get("artists", {}).get("items", [])
-        if items:
-            return clean_tags(items[0].get("genres", []))
-    except Exception:
-        pass
+    for variant in artist_query_variants(artist_name):
+        # Forme entre guillemets d'abord ; la forme nue ensuite, car sur les
+        # noms ponctues ("A-Ha", "U2") les guillemets font eux aussi deraper la
+        # recherche. La verification du nom rend la seconde tentative sure.
+        for query in (f'artist:"{variant}"', f"artist:{variant}"):
+            try:
+                res = sp.search(q=query, type="artist", limit=5)
+            except Exception:
+                continue
+            for item in res.get("artists", {}).get("items", []) or []:
+                if not artist_hit_matches(variant, item.get("name")):
+                    continue
+                genres = clean_tags(item.get("genres", []) or [])
+                if genres:
+                    return genres
     return []
 
 def get_spotify_track_artist_genres(sp, track_id):

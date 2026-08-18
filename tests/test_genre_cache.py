@@ -25,7 +25,17 @@ class FakeRedis:
 
 class MakeKeyTest(unittest.TestCase):
     def test_album_id_preferred_and_secret_free(self):
-        self.assertEqual(make_key("abc123", "Album", "Artist"), "genre:album:abc123")
+        self.assertEqual(
+            make_key("abc123", "Album", "Artist"), "genre:album:abc123|artist"
+        )
+
+    def test_album_id_key_includes_artist_so_a_retag_invalidates(self):
+        # Un fichier mal tague garderait sinon son genre errone pendant tout le
+        # TTL (cas "Magic in the Air" tague "Badly Drawn Boy" -> Britpop fige).
+        self.assertNotEqual(
+            make_key("abc123", "Africainement votre", "Badly Drawn Boy"),
+            make_key("abc123", "Africainement votre", "Magic System"),
+        )
 
     def test_name_fallback_is_normalized(self):
         self.assertEqual(

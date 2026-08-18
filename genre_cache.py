@@ -36,9 +36,16 @@ def _slug(value):
 
 
 def make_key(album_id, album_name, artist_name):
-    """Build a stable, secret-free cache key for an album/artist lookup."""
+    """Build a stable, secret-free cache key for an album/artist lookup.
+
+    Le nom de l'artiste fait partie de la cle MEME quand un ``album_id``
+    existe : sans lui, un fichier mal tague au moment d'un run garde son
+    genre errone pendant tout le TTL (90 j) et un retag ulterieur reste sans
+    effet. C'est ce qui a laisse "Magic in the Air" (Magic System) classe
+    Britpop apres avoir ete tague "Badly Drawn Boy" le temps d'un run.
+    """
     if album_id:
-        return f"genre:album:{album_id}"
+        return f"genre:album:{album_id}|{_slug(artist_name)}"
     return f"genre:name:{_slug(album_name)}|{_slug(artist_name)}"
 
 
