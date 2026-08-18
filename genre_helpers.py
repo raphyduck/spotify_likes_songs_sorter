@@ -112,6 +112,39 @@ def get_musicbrainz_album_info(album_name, artist_name, max_results=5):
         pass
     return []
 
+def get_musicbrainz_artist_genres(artist_name, max_results=5):
+    """
+    Query MusicBrainz for an artist's genre tags (community-voted).
+
+    Dernier recours de la voie "par artiste" : Spotify a vide le champ
+    genres de beaucoup de gros artistes (U2, P!nk, Cher...) et les toptags
+    LastFM de leurs pistes reviennent souvent vides. MusicBrainz, lui, garde
+    des tags votes. Le nom du resultat est verifie (artist_hit_matches) pour
+    ne pas retomber dans le piege des homonymes.
+    """
+    try:
+        url = "https://musicbrainz.org/ws/2/artist/"
+        params = {
+            "query": f'artist:"{artist_name}"',
+            "fmt": "json",
+            "limit": max_results,
+        }
+        r = requests.get(url, params=params, timeout=6,
+                         headers={"User-Agent": "MusicSorter/1.0"})
+        for item in r.json().get("artists", []):
+            if not artist_hit_matches(artist_name, item.get("name", "")):
+                continue
+            tags = sorted(item.get("tags", []),
+                          key=lambda t: -int(t.get("count", 0) or 0))
+            names = [t.get("name", "") for t in tags
+                     if int(t.get("count", 0) or 0) > 0]
+            if names:
+                return clean_tags(names[:5])
+    except Exception:
+        pass
+    return []
+
+
 def get_lastfm_track_info(song_name, artist_name, api_key):
     """
     Retrieve top tags for a track from Last.fm.

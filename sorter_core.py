@@ -24,6 +24,7 @@ from genre_helpers import (
     clean_album_name,
     normalize_and_sort_genres,
     get_spotify_artist_genres,
+    get_musicbrainz_artist_genres,
     get_lastfm_track_info,
 )
 from genre_cache import build_cache_from_config, make_key
@@ -687,6 +688,14 @@ def run(backend, config, refresh_cache=False, no_cache=False):
                     found = get_spotify_artist_genres(sp, artist)
                     if found:
                         genres, src = found, "Spotify Artist (track)"
+                if not genres:
+                    # Spotify a vide le champ genres de beaucoup de gros
+                    # artistes (U2, P!nk, Cher...) : MusicBrainz garde des
+                    # tags votes. Rate-limit MB : 1 requete/s.
+                    time.sleep(1.0)
+                    found = get_musicbrainz_artist_genres(artist)
+                    if found:
+                        genres, src = found, "MusicBrainz Artist"
                 cache.set(key, genres, src)
             if not genres and lfm:
                 found = get_lastfm_track_info(df.at[i, "Song"], artist, lfm)
