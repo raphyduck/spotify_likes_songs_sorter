@@ -543,6 +543,7 @@ class SubsonicBackend(Backend):
         # ``get_genre_providers`` only receives the track id (the song argument
         # is the title string), so the mapping step stashes the tags here.
         self._genre_by_track = {}
+        self._spotify = None  # optional Spotify client-credentials client for genre cross-lookup
 
     # --- auth -----------------------------------------------------------------
     def authenticate(self, config):
@@ -554,6 +555,9 @@ class SubsonicBackend(Backend):
         self.client_name = config.get("NAVIDROME", "client_name",
                                       fallback="likes_songs_sorter")
         self.api_version = config.get("NAVIDROME", "api_version", fallback="1.16.1")
+        # Cross-lookup Spotify (flux Client Credentials, sans login utilisateur):
+        # meme chaine de sources que les runs Spotify/Tidal precedents.
+        self._spotify = TidalBackend._maybe_build_spotify_client(config)
 
         print("\n🔄 Authenticating with Navidrome...")
         # A simple ping validates the credentials right away instead of letting
@@ -665,14 +669,22 @@ class SubsonicBackend(Backend):
             ignore_local = config.getboolean("GENRE", "ignore_local_tags", fallback=False)
         except Exception:
             ignore_local = False
-        external = [
+        external = []
+        # Spotify d'abord (album-level puis artist-level), comme pour Tidal:
+        # ses genres sont les plus fiables et alignent ce backend sur les
+        # playlists precedentes.
+        if self._spotify is not None:
+            sp = self._spotify
+            external.append(("Spotify Album", lambda: get_spotify_album_search_info(sp, album, artist)))
+            external.append(("Spotify Artist", lambda: get_spotify_artist_genres(sp, artist)))
+        external.extend([
             ("Discogs", lambda: get_discogs_album_info(clean_album, artist, self._discogs_key)),
             ("LastFM Album", lambda: get_lastfm_album_info(clean_album, artist, self._lastfm_key)),
             ("MusicBrainz", lambda: get_musicbrainz_album_info(clean_album, artist)),
             ("LastFM Track", lambda: get_lastfm_track_info(song, artist, self._lastfm_key)),
             ("Wikipedia", lambda: get_wikipedia_album_info(clean_album, artist)),
             ("iTunes", lambda: get_itunes_album_info(clean_album, artist)),
-        ]
+        ])
         local = ("Local Tag", lambda: local_tags)
         if ignore_local:
             providers = external + [local]   # local en dernier recours
