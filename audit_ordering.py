@@ -69,6 +69,19 @@ def audit(path):
              for x in (d["Root Genre"] if has_root else ["?"] * n)]
     js = [jaccard(tags[i], tags[i + 1]) for i in range(n - 1)]
 
+    # --- decomposition intra / inter-album ------------------------------------
+    # Les paires internes a un album partagent la meme etiquette par
+    # construction (Jaccard ~1 gratuit) et gonflent la moyenne brute (~57 %
+    # des paires). Seul l'inter-album mesure ce que le tri decide vraiment.
+    if "Unique Album" in d.columns:
+        units = [str(x) for x in d["Unique Album"]]
+        intra = [js[i] for i in range(n - 1) if units[i] == units[i + 1]]
+        inter = [js[i] for i in range(n - 1) if units[i] != units[i + 1]]
+    else:
+        intra, inter = [], js
+    coh_intra = round(float(np.mean(intra)), 4) if intra else None
+    coh_inter = round(float(np.mean(inter)), 4) if inter else None
+
     # --- intrus : casse une sequence par ailleurs coherente -------------------
     intrus = []
     for i in range(1, n - 1):
@@ -127,6 +140,8 @@ def audit(path):
     return {
         "fichier": path, "titres": n,
         "cohesion": round(float(np.mean(js)), 4),
+        "cohesion_intra": coh_intra,
+        "cohesion_inter": coh_inter,
         "ruptures_pct": round(100 * sum(1 for x in js if x == 0) / len(js), 2),
         "sans_genre_pct": round(100 * sum(1 for t in tags if not t) / n, 2),
         "intrus": len(intrus),
@@ -155,7 +170,7 @@ def main():
     args = ap.parse_args()
 
     reports = []
-    header = (f"{'fichier':52}{'titres':>7}{'cohesion':>10}{'intrus':>8}"
+    header = (f"{'fichier':52}{'titres':>7}{'cohesion':>10}{'inter-alb':>11}{'intrus':>8}"
               f"{'familles':>10}{'eclatees':>10}{'macro':>8}{'queue':>7}{'compil.':>9}")
     print(header)
     print("-" * len(header))
@@ -167,7 +182,8 @@ def main():
             continue
         reports.append(r)
         macro = f"{round(100 * r['macro_ratio'])} %" if r["macro_ratio"] is not None else "—"
-        print(f"{path[-52:]:52}{r['titres']:7}{r['cohesion']:10.3f}{r['intrus']:8}"
+        inter = f"{r['cohesion_inter']:.3f}" if r.get("cohesion_inter") is not None else "—"
+        print(f"{path[-52:]:52}{r['titres']:7}{r['cohesion']:10.3f}{inter:>11}{r['intrus']:8}"
               f"{r['familles']:10}{r['familles_eclatees']:10}{macro:>8}"
               f"{r['queue_titres']:7}{r['compilations_titres']:9}")
 

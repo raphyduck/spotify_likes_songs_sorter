@@ -20,7 +20,12 @@ from sklearn.metrics.pairwise import cosine_similarity
 from scipy.sparse.csgraph import minimum_spanning_tree
 from tqdm import tqdm
 
-from genre_helpers import clean_album_name, normalize_and_sort_genres
+from genre_helpers import (
+    clean_album_name,
+    normalize_and_sort_genres,
+    get_spotify_artist_genres,
+    get_lastfm_track_info,
+)
 from genre_cache import build_cache_from_config, make_key
 from genre_normalization import (
     load_genre_roots,
@@ -299,6 +304,129 @@ def _nearest_neighbor_order(labels, sim):
     return [labels[i] for i in order]
 
 
+def _nearest_neighbor_indices(indices, sim):
+    """Greedy nearest-neighbour chain over matrix ``indices`` (not labels)."""
+    if len(indices) <= 1:
+        return list(indices)
+    remaining = set(indices)
+    start = max(indices, key=lambda k: (sim[k, list(indices)].mean(), -k))
+    order = [start]
+    remaining.discard(start)
+    while remaining:
+        last = order[-1]
+        best = max(remaining, key=lambda j: (sim[last, j], -j))
+        order.append(best)
+        remaining.discard(best)
+    return order
+
+
+def _improve_path_order(order, sim):
+    """2-opt + Or-opt local search maximizing total adjacent similarity.
+
+    The greedy nearest-neighbour chain consumes the well-connected families
+    first and strands the late ones next to unrelated neighbours (measured:
+    only ~29 % of the attainable adjacent proximity was exploited). This pass
+    repairs those seams. Deterministic; converges in a few sweeps for the
+    ~30-70 families of a real library.
+    """
+    order = list(order)
+    n = len(order)
+    if n < 4:
+        return order
+
+    def s(a, b):
+        return float(sim[a, b]) if a is not None and b is not None else 0.0
+
+    improved, sweeps = True, 0
+    while improved and sweeps < 80:
+        improved = False
+        sweeps += 1
+        # 2-opt: reverse order[i:j+1]
+        for i in range(1, n - 1):
+            for j in range(i + 1, n):
+                a, b = order[i - 1], order[i]
+                c = order[j]
+                d = order[j + 1] if j + 1 < n else None
+                gain = s(a, c) + s(b, d) - s(a, b) - s(c, d)
+                if gain > 1e-9:
+                    order[i:j + 1] = reversed(order[i:j + 1])
+                    improved = True
+        # Or-opt: relocate segments of length 1..3
+        for seg in (1, 2, 3):
+            i = 0
+            while i + seg <= len(order):
+                L = order[i - 1] if i > 0 else None
+                R = order[i + seg] if i + seg < len(order) else None
+                head, tail = order[i], order[i + seg - 1]
+                removal = s(L, R) - s(L, head) - s(tail, R)
+                rest = order[:i] + order[i + seg:]
+                best_gain, best_p, best_rev = 0.0, None, False
+                for p in range(len(rest) + 1):
+                    A = rest[p - 1] if p > 0 else None
+                    B = rest[p] if p < len(rest) else None
+                    base = s(A, B)
+                    for rev in (False, True):
+                        h, t = (tail, head) if rev else (head, tail)
+                        gain = removal + s(A, h) + s(t, B) - base
+                        if gain > best_gain + 1e-9:
+                            best_gain, best_p, best_rev = gain, p, rev
+                if best_p is not None:
+                    segment = order[i:i + seg]
+                    if best_rev:
+                        segment = list(reversed(segment))
+                    order = rest[:best_p] + segment + rest[best_p:]
+                    improved = True
+                else:
+                    i += 1
+    return order
+
+
+def _insert_singletons(order, singles, sim):
+    """Insert single-album families next to their closest family.
+
+    They used to be dumped in an alphabetical tail (the criterion was "one
+    ALBUM", not "few tracks" -- Folclor Andino and its 18 tracks ended up
+    unsorted at the end of the playlist). A single album does not need a
+    reliable centroid to be placed: its own tag vector is enough to hook it
+    to its nearest neighbour. Most-connected first, so related singletons
+    (Kizomba, Kompa, Shatta...) can chain onto one another.
+    """
+    MIN_LINK = 0.02  # en dessous, le singleton n'a pas de vraie voisine
+    order = list(order)
+    pending = list(singles)
+    orphans = []
+    while pending:
+        if not order:
+            order.append(pending.pop(0))
+            continue
+        k = max(pending, key=lambda q: (max(float(sim[q, j]) for j in order), -q))
+        pending.remove(k)
+        if max(float(sim[k, j]) for j in order) < MIN_LINK:
+            # Aucune famille proche : ne pas le forcer au milieu (ni surtout
+            # en TETE, ou les ex-aequo a gain nul s'empilaient) -- il ira
+            # dans la zone "divers" juste avant Unknown.
+            orphans.append(k)
+            continue
+        # Position par gain d'insertion ; les ex-aequo vont en FIN de chaine.
+        best_p = len(order)
+        L = order[-1]
+        best_gain = float(sim[L, k])
+        for p in range(len(order)):
+            L = order[p - 1] if p > 0 else None
+            R = order[p]
+            gain = float(sim[k, R])
+            if L is not None:
+                gain += float(sim[L, k]) - float(sim[L, R])
+            if gain > best_gain + 1e-12:
+                best_gain, best_p = gain, p
+        order.insert(best_p, k)
+    if orphans:
+        # Chainer les orphelins entre eux (ils peuvent se ressembler) puis
+        # les accrocher en fin.
+        order.extend(_nearest_neighbor_indices(orphans, sim))
+    return order
+
+
 def _two_level_order(names, M, sim_tags, tag_sets, roots,
                      segmentation_strength, max_clusters):
     """Order albums macro-by-root, micro-by-tags, with block orientation.
@@ -325,16 +453,22 @@ def _two_level_order(names, M, sim_tags, tag_sets, roots,
         root_sim = cosine_similarity(centroids)
     else:
         root_sim = np.zeros((len(root_labels), len(root_labels)))
-    main = [k for k, r in enumerate(root_labels) if len(groups[r]) >= 2 and r != "unknown"]
-    tail = [k for k in range(len(root_labels)) if k not in main]
+    idx_all = list(range(len(root_labels)))
+    unknown_idx = [k for k in idx_all if root_labels[k] == "unknown"]
+    main = [k for k in idx_all
+            if len(groups[root_labels[k]]) >= 2 and k not in unknown_idx]
+    singles = [k for k in idx_all if k not in main and k not in unknown_idx]
     if main:
-        main_order = _nearest_neighbor_order(
-            [root_labels[k] for k in main], root_sim[np.ix_(main, main)]
-        )
+        chain = _nearest_neighbor_indices(main, root_sim)
+        chain = _improve_path_order(chain, root_sim)
     else:
-        main_order = []
-    tail_order = sorted((root_labels[k] for k in tail), key=lambda r: (-len(groups[r]), r))
-    macro = main_order + tail_order
+        chain = []
+    chain = _insert_singletons(chain, singles, root_sim)
+    # Polish final : les insertions peuvent creer de nouvelles coutures
+    # ameliorables, et les orphelins de fin peuvent trouver mieux.
+    chain = _improve_path_order(chain, root_sim)
+    macro = ([root_labels[k] for k in chain]
+             + [root_labels[k] for k in unknown_idx])
 
     # Micro ordering inside each root family (full-tag similarity).
     micro = {}
@@ -514,6 +648,55 @@ def run(backend, config, refresh_cache=False, no_cache=False):
     df["Album Genre"] = album_genres
     df["source"] = album_genre_sources
 
+    # --- Compilations : genre par artiste de la piste ------------------------
+    # Le genre est resolu par ALBUM ; sur une compilation (>= 3 artistes
+    # distincts) la meme etiquette est collee a toutes les pistes ("Now
+    # That's What I Call Music! 47" -> K-Pop pour U2, Modjo et All Saints).
+    # Ici on re-resout ces pistes par l'artiste de la piste (cache dedie
+    # ``genre:artist:<slug>``), et les pistes restees sans genre tentent la
+    # meme voie. Desactivable par [GENRE] compilation_per_artist = false.
+    per_artist = True
+    try:
+        per_artist = config.getboolean("GENRE", "compilation_per_artist", fallback=True)
+    except Exception:
+        per_artist = True
+    _ids = df["Album ID"].astype("string")
+    _nart = df.groupby(_ids, dropna=True)["Artist"].transform("nunique")
+    _nart = pd.to_numeric(_nart, errors="coerce").fillna(1)
+    _is_comp = df["Album ID"].notna() & (_nart >= 3)
+    _no_genre = df["Album Genre"].map(lambda g: not g)
+    df["Compilation"] = _is_comp
+    targets = df.index[(_is_comp | _no_genre)] if per_artist else []
+    if len(targets):
+        print(f"\n💿 Compilations & pistes sans genre : resolution par artiste "
+              f"({len(targets)} pistes, {int(_is_comp.sum())} en compilation)...")
+        sp = getattr(backend, "_spotify", None)
+        lfm = getattr(backend, "_lastfm_key", None)
+        for i in tqdm(targets, desc="Par artiste", unit="track"):
+            artist = df.at[i, "Artist"]
+            slug = " ".join(str(artist or "").strip().lower().split())
+            if not slug:
+                continue
+            key = "genre:artist:" + slug
+            cached = cache.get(key)
+            if cached is not None:
+                genres, src = cached
+            else:
+                genres, src = [], "None"
+                if sp is not None:
+                    found = get_spotify_artist_genres(sp, artist)
+                    if found:
+                        genres, src = found, "Spotify Artist (track)"
+                cache.set(key, genres, src)
+            if not genres and lfm:
+                found = get_lastfm_track_info(df.at[i, "Song"], artist, lfm)
+                if found:
+                    genres, src = found, "LastFM Track"
+            if genres:
+                df.at[i, "Album Genre"] = list(genres)
+                df.at[i, "source"] = src
+        cache.close()
+
     # Unique identifier - group by normalized album name + primary artist so
     # that multiple Tidal editions/IDs of the same album are treated as one
     # album. Keep the raw Album ID for various-artist releases (compilations /
@@ -526,6 +709,15 @@ def run(backend, config, refresh_cache=False, no_cache=False):
         df["Album ID"].isna() | (_artists_per_album <= 1),
         df["Album ID"].astype("string"),
     )
+    # Compilations re-resolues par artiste : chaque piste devient sa propre
+    # unite de tri, sinon "Beautiful Day" resterait soudee au genre de sa
+    # compilation. Les albums a 2 artistes (duos, feat.) restent groupes.
+    if per_artist:
+        _comp_mask = df["Compilation"].fillna(False).astype(bool)
+        df.loc[_comp_mask, "Unique Album"] = (
+            df.loc[_comp_mask, "Album ID"].astype("string")
+            + " · " + pd.Series(df.index, index=df.index)[_comp_mask].astype(str)
+        )
 
     segmentation_strength = float(config.get("CLUSTERING", "segmentation_strength", fallback="0.6"))
     max_clusters = int(config.get("CLUSTERING", "max_clusters", fallback="10"))
@@ -557,6 +749,29 @@ def run(backend, config, refresh_cache=False, no_cache=False):
     )
     final_df["Album Genre"] = final_df["Sorted Genres"]
     final_df.drop(columns=["Sorted Genres"], inplace=True)
+
+    # Decomposition honnete du chevauchement PISTE a piste : les paires
+    # internes a un album partagent la meme etiquette par construction
+    # (Jaccard ~1 gratuit) et gonflent la moyenne brute. Seul l'inter-album
+    # mesure ce que le tri decide vraiment.
+    _tag_sets = [
+        {t.strip().lower() for t in str(g).split(",") if t.strip()}
+        if isinstance(g, str) else set(g or [])
+        for g in final_df["Album Genre"]
+    ]
+    _units = list(final_df["Unique Album"])
+    _intra, _inter = [], []
+    for a, b, ua, ub in zip(_tag_sets, _tag_sets[1:], _units, _units[1:]):
+        if not a and not b:
+            continue
+        union = a | b
+        score = (len(a & b) / len(union)) if union else 0.0
+        (_intra if ua == ub else _inter).append(score)
+    if _inter:
+        print(f"   Track-level overlap:            intra-album "
+              f"{(sum(_intra) / len(_intra)) if _intra else 0.0:.3f} "
+              f"({len(_intra)} paires, ~1 par construction)  ·  "
+              f"inter-album {sum(_inter) / len(_inter):.3f} ({len(_inter)} paires)")
 
     # -----------------------------
     #  Create playlist & save CSV
